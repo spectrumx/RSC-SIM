@@ -3,9 +3,10 @@
 The Python implementation is organized as follows:
 - **tuto_radiomdl.ipynb**: Jupyter notebook for python which produces the same results with the Julia notebook (`Julia/test/tuto_mdl_obs_modified.ipynb`)
 - **tuto_radiomdl.py**: Python script to run in a command line interface (CLI) that is equivalent to the above notebook
-- ***tuto_radiomdl_250401.***: Testing Jupyter notebook and python script with newly generated Arrow files from the data creation scripts for different time span (see **Data Creation Scripts** section below)
+- **tuto_radiomdl_doppler.py**: Enhanced Python script that extends `tuto_radiomdl.py` with Doppler effect analysis and compensation. It includes automatic risk assessment for satellite interference, radial velocity calculations, and physics-based Doppler correction in the frequency domain for more accurate satellite interference predictions
+- ***tuto_radiomdl_250401.ipynb and .py***: Testing Jupyter notebook and python script with newly generated Arrow files from the data creation scripts for different time span (see **Data Creation Scripts** section below)
 - **Data directory**: `tutorial/data/` - Contains input data files
-- **Data creation directory**: `tutorial/data_creation/` - Contains scripts to generate input data files, .arrow, which are for getting trajectories of a star and a satellite with user-specified date and time. Currently, Cas A (Cassiopeia A) and Starlink satellite are used.
+- **Data creation directory**: `tutorial/data_creation/` - Contains scripts to generate input data files, .arrow, which are for getting trajectories of a star and a satellite with user-specified date and time. Currently, Cas A (Cassiopeia A) and Starlink satellite are used
 
 
 ### Data Files

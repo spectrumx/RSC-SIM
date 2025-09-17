@@ -1,5 +1,5 @@
 """
-Configuration parameters for RadioMdlPy tutorials.
+Configuration parameters for RSC-SIM tutorials.
 
 This module contains all the shared parameters, constants, and configuration
 values used across the tutorial scripts.

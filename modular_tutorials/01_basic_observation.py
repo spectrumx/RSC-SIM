@@ -3,7 +3,7 @@
 Tutorial 01: Basic Radio Astronomy Observation
 
 This tutorial introduces the fundamental concepts of radio astronomy observation
-using the RadioMdlPy framework. It covers:
+using the RSC-SIM framework. It covers:
 
 1. Setting up a radio telescope instrument
 2. Creating observation plans and trajectories

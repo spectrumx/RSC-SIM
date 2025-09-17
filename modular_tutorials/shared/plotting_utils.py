@@ -1,5 +1,5 @@
 """
-Plotting utilities for RadioMdlPy tutorials.
+Plotting utilities for RSC-SIM tutorials.
 
 This module provides common plotting functions and utilities for
 visualizing antenna patterns, trajectories, and observation results.

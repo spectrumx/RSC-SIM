@@ -1,5 +1,5 @@
 """
-Sky model utilities for RadioMdlPy tutorials.
+Sky model utilities for RSC-SIM tutorials.
 
 This module provides functions to create sky temperature models including
 astronomical sources, atmospheric effects, and background radiation.

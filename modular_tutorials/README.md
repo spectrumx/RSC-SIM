@@ -1,10 +1,10 @@
-# RadioMdlPy Modular Tutorials
+# RSC-SIM Modular Tutorials
 
-This directory contains a series of focused, modular tutorials for learning radio astronomy observation modeling with the RadioMdlPy framework. Each tutorial builds upon the previous ones, providing a progressive learning experience.
+This directory contains a series of focused, modular tutorials for learning radio astronomy observation modeling with the RSC-SIM framework. Each tutorial builds upon the previous ones, providing a progressive learning experience.
 
 <br />
 
-These modular tutorials are based on `tutorial/tuto_radiomdl.py`
+These modular tutorials from 01 to 04 are based on `tutorial/tuto_radiomdl.py`. Tutorial 05 is in part related to `tutorial/tuto_radiomdl_doppler.py`
 
 ## 📁 Directory Structure
 
@@ -15,6 +15,7 @@ modular_tutorials/
 ├── 02_satellite_interference.py       # Satellite modeling
 ├── 03_sky_mapping.py                  # Sky visualization
 ├── 04_power_spectral_density.py       # Frequency analysis
+├── 05_doppler_effect.py               # Doppler effect analysis and compensation
 └── shared/                            # Shared utilities
     ├── __init__.py                    # Package initialization
     ├── config.py                      # Configuration parameters
@@ -71,6 +72,18 @@ modular_tutorials/
 - Create spectrograms
 - Characterize spectral signatures
 
+### **05: Doppler Effect Analysis and Compensation**
+**File:** `05_doppler_effect.py`
+
+**Focus:** Doppler effect analysis and frequency-domain compensation
+
+**Learning Objectives:**
+- Analyze Doppler shifts in satellite trajectories
+- Calculate radial velocities and frequency shifts
+- Perform multi-satellite Doppler statistics
+- Implement risk-based compensation strategies
+- Apply physics-based frequency correction
+
 ## 🛠️ Shared Utilities
 
 The `shared/` directory contains reusable components:
@@ -103,7 +116,7 @@ The `shared/` directory contains reusable components:
 
 ### **Prerequisites**
 1. **Python Environment:** Python 3.9+ with required packages
-2. **RadioMdlPy Installation:** Ensure the main package is installed
+2. **RSC-SIM Installation:** Ensure the main package is installed
 3. **Data Files:** Verify tutorial data files are available in `../tutorial/data/`
 
 ### **Running**

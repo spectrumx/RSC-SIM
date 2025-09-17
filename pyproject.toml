@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "RadioMdlPy"
-version = "1.3.0"
+name = "RSC-SIM"
+version = "1.4.0"
 description = "A Python package for radio modeling calculations"
 readme = "README.md"
 license = {text = "MIT"}
@@ -45,7 +45,7 @@ where = ["src"]
 include = ["*"]
 
 [tool.setuptools.package-dir]
-"RadioMdlPy" = "src"
+"RSC-SIM" = "src"
 
 [tool.setuptools.package-data]
 "*" = ["*.py"]

@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 # Add the src directory to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src'))
 
-# Import RadioMdlPy modules
+# Import RSC-SIM modules
 from radio_types import Observation, Constellation, Trajectory, Instrument  # noqa: E402
 from astro_mdl import power_to_temperature, temperature_to_power  # noqa: E402
 from sat_mdl import sat_link_budget_vectorized  # noqa: E402

@@ -26,7 +26,7 @@ This software grew and evolved out of the RadioMdl codebase, a Julia package cre
 
 ### `modular_tutorials/` directory: Recommanded for learning
 
-This directory contains a series of focused, modular tutorials for learning radio astronomy observation modeling with the RadioMdlPy framework. Each tutorial builds upon the previous ones, providing a progressive learning experience. Details can be found in the `README.md` inside the `modular_tutorials/`.
+This directory contains a series of focused, modular tutorials for learning radio astronomy observation modeling with the RSC-SIM framework. Each tutorial builds upon the previous ones, providing a progressive learning experience. Details can be found in the `README.md` inside the `modular_tutorials/`.
 
 ### `tutorial/` directory
 
@@ -97,20 +97,20 @@ It's recommended to create a virtual environment before installing the package:
 
 ```bash
 # Clone the repository at a directory
-git clone https://github.com/spectrumx/RadioMdlPy.git
+git clone https://github.com/spectrumx/RSC-SIM.git
 
 # Create and activate virtual environment (recommended)
-python -m venv radiomdlpy_env
+python -m venv rsc-sim-env
 # On Windows:
-radiomdlpy_env\Scripts\activate
+rsc-sim-env\Scripts\activate
 # On macOS/Linux:
-source radiomdlpy_env/bin/activate
+source rsc-sim-env/bin/activate
 
-# change directory to RadioMdlPy and install dependencies (packages)
-cd RadioMdlPy
+# change directory to RSC-SIM and install dependencies (packages)
+cd RSC-SIM
 pip install -e .
 
-# When you finish working with RadioMdlPy, deactivate the virtual environment
+# When you finish working with RSC-SIM, deactivate the virtual environment
 deactivate
 ```
 

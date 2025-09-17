@@ -1,5 +1,5 @@
 """
-Instrument setup utilities for RadioMdlPy tutorials.
+Instrument setup utilities for RSC-SIM tutorials.
 
 This module provides functions to set up telescope and satellite instruments
 with consistent parameters across all tutorials.
