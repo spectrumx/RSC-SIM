@@ -4,7 +4,7 @@ This directory contains a series of focused, modular tutorials for learning radi
 
 <br />
 
-These modular tutorials from 01 to 04 are based on `tutorial/tuto_radiomdl.py`. Tutorial 05 is in part related to `tutorial/tuto_radiomdl_doppler.py`
+These modular tutorials from 01 to 04 are based on `tutorial/tuto_radiomdl.py`. Tutorial 05 is in part related to `tutorial/tuto_radiomdl_doppler.py`. Tutorial 06 is in part related to `tutorial/tuto_radiomdl_transmitter.py`.
 
 ## 📁 Directory Structure
 
@@ -16,6 +16,7 @@ modular_tutorials/
 ├── 03_sky_mapping.py                  # Sky visualization
 ├── 04_power_spectral_density.py       # Frequency analysis
 ├── 05_doppler_effect.py               # Doppler effect analysis and compensation
+├── 06_transmitter_characteristics.py  # Transmitter characteristics
 └── shared/                            # Shared utilities
     ├── __init__.py                    # Package initialization
     ├── config.py                      # Configuration parameters
@@ -83,6 +84,20 @@ modular_tutorials/
 - Perform multi-satellite Doppler statistics
 - Implement risk-based compensation strategies
 - Apply physics-based frequency correction
+
+### **06: Transmitter Characteristics Analysis**
+**File:** `06_transmitter_characteristics.py`
+
+**Focus:** Transmitter characteristics and realistic interference modeling
+
+**Learning Objectives:**
+- Understand polarization mismatch between satellite transmitters and radio telescopes
+- Learn to calculate and visualize polarization loss effects
+- Explore harmonic contributions from satellite transmitters
+- Implement transmitter modeling with realistic characteristics
+- Compare interference predictions with and without transmitter characteristics
+- Analyze realistic scenarios (Starlink circular + Westford linear = 3 dB loss)
+
 
 ## 🛠️ Shared Utilities
 

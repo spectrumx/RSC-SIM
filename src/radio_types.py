@@ -199,6 +199,79 @@ class Instrument:
 
 
 @dataclass
+class Transmitter:
+    """
+    Enhanced transmitter class with polarization and harmonics modeling.
+
+    This class extends the basic Instrument functionality with additional
+    transmitter-specific characteristics that are important for accurate
+    interference modeling in radio astronomy.
+    """
+    instrument: Instrument  # Base instrument (antenna, frequency, power, etc.)
+    polarization: str  # Polarization type: 'linear', 'circular', 'elliptical'
+    polarization_angle: float  # Polarization angle in degrees (0-180)
+    harmonics: List[Tuple[float, float]]  # List of (frequency_multiplier, power_reduction_factor)
+
+    def __post_init__(self):
+        """Validate the transmitter parameters"""
+        if self.polarization not in ['linear', 'circular', 'elliptical']:
+            raise ValueError("polarization must be 'linear', 'circular', or 'elliptical'")
+
+        if not (0 <= self.polarization_angle <= 180):
+            raise ValueError("polarization_angle must be between 0 and 180 degrees")
+
+        # Validate harmonics format
+        for i, (freq_mult, power_red) in enumerate(self.harmonics):
+            if freq_mult <= 0:
+                raise ValueError(f"harmonic {i}: frequency_multiplier must be positive")
+            if power_red <= 0 or power_red > 1:
+                raise ValueError(f"harmonic {i}: power_reduction_factor must be between 0 and 1")
+
+    @classmethod
+    def from_instrument(cls, instrument: Instrument, polarization: str = 'linear',
+                        polarization_angle: float = 0.0,
+                        harmonics: List[Tuple[float, float]] = None) -> 'Transmitter':
+        """Create a Transmitter from an existing Instrument"""
+        if harmonics is None:
+            harmonics = []
+        return cls(instrument, polarization, polarization_angle, harmonics)
+
+    def get_instrument(self) -> Instrument:
+        """Get the base instrument"""
+        return self.instrument
+
+    def get_polarization(self) -> str:
+        """Get the polarization type"""
+        return self.polarization
+
+    def get_polarization_angle(self) -> float:
+        """Get the polarization angle in degrees"""
+        return self.polarization_angle
+
+    def get_harmonics(self) -> List[Tuple[float, float]]:
+        """Get the harmonics list"""
+        return self.harmonics
+
+    def add_harmonic(self, frequency_multiplier: float, power_reduction_factor: float):
+        """Add a harmonic to the transmitter"""
+        if frequency_multiplier <= 0:
+            raise ValueError("frequency_multiplier must be positive")
+        if power_reduction_factor <= 0 or power_reduction_factor > 1:
+            raise ValueError("power_reduction_factor must be between 0 and 1")
+
+        self.harmonics.append((frequency_multiplier, power_reduction_factor))
+
+    def get_harmonic_frequencies(self) -> List[float]:
+        """Get list of harmonic frequencies"""
+        base_freq = self.instrument.get_center_freq()
+        return [base_freq * freq_mult for freq_mult, _ in self.harmonics]
+
+    def get_harmonic_powers(self) -> List[float]:
+        """Get list of harmonic power reduction factors"""
+        return [power_red for _, power_red in self.harmonics]
+
+
+@dataclass
 class Trajectory:
     """
     Trajectory class for radio modeling.

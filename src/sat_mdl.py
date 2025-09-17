@@ -103,6 +103,7 @@ if NUMBA_AVAILABLE:
         return result
 
 
+# GOOD!!! but error with transmitter
 def sat_link_budget_vectorized(
     dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
     beam_avoid=0.0, turn_off=False
@@ -205,6 +206,10 @@ def sat_link_budget_vectorized(
     # Reshape back to original broadcast shape
     return result.reshape(shape)
 
+
+# =============================================================================
+# Doppler effect and its compensation functions
+# =============================================================================
 
 # Vectorized link budget with Doppler correction
 def lnk_bdgt_with_doppler_correction(
@@ -837,3 +842,555 @@ def print_doppler_statistical_summary(stats, observation_band_width):
         print("💡 RECOMMENDATION: Standard observation approach should work")
 
     print("="*80)
+
+
+# =============================================================================
+# Enhanced Transmitter Characteristics Functions
+# =============================================================================
+
+def calculate_polarization_mismatch_loss(
+    tx_polarization: str,
+    tx_polarization_angle: float,
+    rx_polarization: str = 'linear',
+    rx_polarization_angle: float = 0.0
+) -> float:
+    """
+    Calculate polarization mismatch loss between transmitter and receiver.
+
+    Args:
+        tx_polarization: Transmitter polarization type ('linear', 'circular', 'elliptical')
+        tx_polarization_angle: Transmitter polarization angle in degrees (0-180)
+        rx_polarization: Receiver polarization type ('linear', 'circular', 'elliptical')
+        rx_polarization_angle: Receiver polarization angle in degrees (0-180)
+
+    Returns:
+        polarization_loss: Power loss factor (0-1, where 1 = no loss, 0 = complete loss)
+    """
+
+    # Convert angles to radians
+    tx_angle_rad = np.radians(tx_polarization_angle)
+    rx_angle_rad = np.radians(rx_polarization_angle)
+
+    # Calculate angle difference
+    angle_diff = abs(tx_angle_rad - rx_angle_rad)
+
+    # Handle different polarization combinations
+    if tx_polarization == 'linear' and rx_polarization == 'linear':
+        # Linear-to-linear: loss = cos²(angle_difference)
+        polarization_loss = np.cos(angle_diff) ** 2
+
+    elif tx_polarization == 'circular' and rx_polarization == 'circular':
+        # Circular-to-circular: loss depends on handedness
+        # Assume same handedness for simplicity (can be extended)
+        polarization_loss = 1.0
+
+    elif tx_polarization == 'linear' and rx_polarization == 'circular':
+        # Linear-to-circular: 3 dB loss (50% power)
+        polarization_loss = 0.5
+
+    elif tx_polarization == 'circular' and rx_polarization == 'linear':
+        # Circular-to-linear: 3 dB loss (50% power)
+        polarization_loss = 0.5
+
+    elif tx_polarization == 'elliptical' or rx_polarization == 'elliptical':
+        # Elliptical polarization: complex calculation, use approximation
+        # For simplicity, use average of linear and circular
+        polarization_loss = 0.75
+
+    else:
+        # Default case: assume some loss
+        polarization_loss = 0.8
+
+    return polarization_loss
+
+
+def calculate_polarization_mismatch_loss_vectorized(
+    tx_polarizations: np.ndarray,
+    tx_polarization_angles: np.ndarray,
+    rx_polarization: str = 'linear',
+    rx_polarization_angle: float = 0.0
+) -> np.ndarray:
+    """
+    Vectorized version of polarization mismatch loss calculation.
+
+    Args:
+        tx_polarizations: Array of transmitter polarization types
+        tx_polarization_angles: Array of transmitter polarization angles in degrees
+        rx_polarization: Receiver polarization type
+        rx_polarization_angle: Receiver polarization angle in degrees
+
+    Returns:
+        polarization_losses: Array of power loss factors
+    """
+    # Convert to arrays if needed
+    tx_polarizations = np.asarray(tx_polarizations)
+    tx_polarization_angles = np.asarray(tx_polarization_angles)
+
+    # Initialize output array
+    polarization_losses = np.zeros_like(tx_polarization_angles, dtype=float)
+
+    # Vectorized calculation
+    for i in range(len(tx_polarizations)):
+        polarization_losses[i] = calculate_polarization_mismatch_loss(
+            tx_polarizations[i], tx_polarization_angles[i], rx_polarization, rx_polarization_angle
+        )
+
+    return polarization_losses
+
+
+def sat_link_budget_with_polarization(
+    dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
+    tx_polarization: str = 'linear', tx_polarization_angle: float = 0.0,
+    rx_polarization: str = 'linear', rx_polarization_angle: float = 0.0,
+    beam_avoid=0.0, turn_off=False
+):
+    """
+    Enhanced satellite link budget calculation with polarization mismatch loss.
+
+    This function extends the original sat_link_budget by including polarization
+    mismatch loss between transmitter and receiver.
+
+    Args:
+        dec_tel, caz_tel: Telescope coordinates
+        instru_tel: Telescope instrument
+        dec_sat, caz_sat: Satellite coordinates
+        rng_sat: Satellite range
+        instru_sat: Satellite instrument
+        freq: Frequency
+        tx_polarization: Transmitter polarization type
+        tx_polarization_angle: Transmitter polarization angle in degrees
+        rx_polarization: Receiver polarization type
+        rx_polarization_angle: Receiver polarization angle in degrees
+        beam_avoid: Beam avoidance angle
+        turn_off: Whether to turn off satellites in beam avoidance zone
+
+    Returns:
+        Enhanced link budget with polarization loss included
+    """
+    # Calculate base link budget
+    base_link_budget = sat_link_budget(
+        dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
+        beam_avoid=beam_avoid, turn_off=turn_off
+    )
+
+    # Calculate polarization mismatch loss
+    polarization_loss = calculate_polarization_mismatch_loss(
+        tx_polarization, tx_polarization_angle, rx_polarization, rx_polarization_angle
+    )
+
+    # Apply polarization loss
+    return base_link_budget * polarization_loss
+
+
+def sat_link_budget_with_polarization_vectorized(
+    dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
+    tx_polarizations: np.ndarray, tx_polarization_angles: np.ndarray,
+    rx_polarization: str = 'linear', rx_polarization_angle: float = 0.0,
+    beam_avoid=0.0, turn_off=False
+):
+    """
+    Vectorized version of satellite link budget with polarization mismatch loss.
+
+    Args:
+        dec_tel, caz_tel: Telescope coordinates (can be arrays)
+        instru_tel: Telescope instrument
+        dec_sat, caz_sat: Satellite coordinates (can be arrays)
+        rng_sat: Satellite range (can be array)
+        instru_sat: Satellite instrument
+        freq: Frequency (can be array)
+        tx_polarizations: Array of transmitter polarization types
+        tx_polarization_angles: Array of transmitter polarization angles
+        rx_polarization: Receiver polarization type
+        rx_polarization_angle: Receiver polarization angle
+        beam_avoid: Beam avoidance angle
+        turn_off: Whether to turn off satellites
+
+    Returns:
+        Vectorized enhanced link budget with polarization loss
+    """
+    # Calculate base link budget using vectorized function
+    base_link_budget = sat_link_budget_vectorized(
+        dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
+        beam_avoid=beam_avoid, turn_off=turn_off
+    )
+
+    # Calculate polarization mismatch losses
+    polarization_losses = calculate_polarization_mismatch_loss_vectorized(
+        tx_polarizations, tx_polarization_angles, rx_polarization, rx_polarization_angle
+    )
+
+    # Apply polarization losses
+    return base_link_budget * polarization_losses
+
+
+def calculate_harmonic_contribution(
+    base_frequency: float,
+    base_power: float,
+    harmonics: list,
+    observation_frequency: float,
+    observation_bandwidth: float
+) -> float:
+    """
+    Calculate the contribution from transmitter harmonics at the observation frequency.
+
+    Args:
+        base_frequency: Base frequency of the transmitter
+        base_power: Base power of the transmitter
+        harmonics: List of (frequency_multiplier, power_reduction_factor) tuples
+        observation_frequency: Frequency being observed
+        observation_bandwidth: Bandwidth of the observation
+
+    Returns:
+        harmonic_power: Power contribution from harmonics at observation frequency
+    """
+    harmonic_power = 0.0
+
+    for freq_mult, power_red in harmonics:
+        harmonic_frequency = base_frequency * freq_mult
+
+        # Check if harmonic falls within observation band
+        freq_min = observation_frequency - observation_bandwidth / 2
+        freq_max = observation_frequency + observation_bandwidth / 2
+
+        if freq_min <= harmonic_frequency <= freq_max:
+            # Calculate power contribution from this harmonic
+            harmonic_power += base_power * power_red
+
+    return harmonic_power
+
+
+def calculate_harmonic_contribution_vectorized(
+    base_frequencies: np.ndarray,
+    base_powers: np.ndarray,
+    harmonics_list: list,
+    observation_frequency: float,
+    observation_bandwidth: float
+) -> np.ndarray:
+    """
+    Vectorized version of harmonic contribution calculation.
+
+    Args:
+        base_frequencies: Array of base frequencies
+        base_powers: Array of base powers
+        harmonics_list: List of harmonics lists for each transmitter
+        observation_frequency: Frequency being observed
+        observation_bandwidth: Bandwidth of the observation
+
+    Returns:
+        harmonic_powers: Array of harmonic power contributions
+    """
+    # Convert to arrays if needed
+    base_frequencies = np.asarray(base_frequencies)
+    base_powers = np.asarray(base_powers)
+
+    # Initialize output array
+    harmonic_powers = np.zeros_like(base_powers)
+
+    # Calculate harmonic contributions for each transmitter
+    for i in range(len(base_frequencies)):
+        if i < len(harmonics_list):
+            harmonic_powers[i] = calculate_harmonic_contribution(
+                base_frequencies[i], base_powers[i], harmonics_list[i],
+                observation_frequency, observation_bandwidth
+            )
+
+    return harmonic_powers
+
+
+def sat_link_budget_with_harmonics(
+    dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
+    harmonics: list, beam_avoid=0.0, turn_off=False
+):
+    """
+    Enhanced satellite link budget calculation including harmonic contributions.
+
+    This function calculates the total interference including both the fundamental
+    frequency and all harmonic contributions.
+
+    Args:
+        dec_tel, caz_tel: Telescope coordinates
+        instru_tel: Telescope instrument
+        dec_sat, caz_sat: Satellite coordinates
+        rng_sat: Satellite range
+        instru_sat: Satellite instrument
+        freq: Frequency
+        harmonics: List of (frequency_multiplier, power_reduction_factor) tuples
+        beam_avoid: Beam avoidance angle
+        turn_off: Whether to turn off satellites
+
+    Returns:
+        Total link budget including harmonics
+    """
+    # Calculate fundamental frequency contribution
+    fundamental_contribution = sat_link_budget(
+        dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
+        beam_avoid=beam_avoid, turn_off=turn_off
+    )
+
+    # Calculate harmonic contributions
+    base_freq = instru_sat.get_center_freq()
+    base_power = fundamental_contribution  # Use fundamental as reference
+
+    harmonic_contribution = calculate_harmonic_contribution(
+        base_freq, base_power, harmonics, freq, instru_tel.get_bandwidth()
+    )
+
+    # Total contribution is fundamental + harmonics
+    return fundamental_contribution + harmonic_contribution
+
+
+def sat_link_budget_comprehensive_vectorized(
+    dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, freq, transmitter,
+    rx_polarization: str = 'linear', rx_polarization_angle: float = 0.0,
+    beam_avoid=0.0, turn_off=False, include_harmonics: bool = True
+):
+    """
+    VECTORIZED version of comprehensive satellite link budget calculation.
+
+    This is the REALISTIC SCENARIO version that uses sat_link_budget_vectorized
+    for performance and scalability with large datasets.
+
+    Args:
+        dec_tel, caz_tel: Telescope coordinates (can be arrays)
+        instru_tel: Telescope instrument
+        dec_sat, caz_sat: Satellite coordinates (can be arrays)
+        rng_sat: Satellite ranges (can be arrays)
+        transmitter: Transmitter object with polarization and harmonics
+        freq: Frequencies (can be arrays)
+        rx_polarization: Receiver polarization type
+        rx_polarization_angle: Receiver polarization angle in degrees
+        beam_avoid: Beam avoidance angle in degrees
+        turn_off: Whether to turn off satellites in beam avoidance zone
+        include_harmonics: Whether to include harmonic contributions
+
+    Returns:
+        Vectorized comprehensive link budget with all effects included
+    """
+    try:
+        # Extract transmitter parameters - ensure we get the Instrument object
+        if hasattr(transmitter, 'get_instrument'):
+            instru_sat = transmitter.get_instrument()
+        else:
+            # Fallback: assume transmitter is already an Instrument
+            instru_sat = transmitter
+
+        tx_polarization = (transmitter.get_polarization()
+                           if hasattr(transmitter, 'get_polarization') else 'linear')
+        tx_polarization_angle = (transmitter.get_polarization_angle()
+                                 if hasattr(transmitter, 'get_polarization_angle') else 0.0)
+        harmonics = (transmitter.get_harmonics()
+                     if hasattr(transmitter, 'get_harmonics') and include_harmonics else [])
+
+        # Calculate base link budget using VECTORIZED function for performance
+        # CRITICAL FIX: Pass instru_sat (Instrument object), not transmitter (Transmitter object)
+        # Also ensure freq is the correct type (should be numeric, not Instrument)
+        base_contribution = sat_link_budget_vectorized(
+            dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
+            beam_avoid=beam_avoid, turn_off=turn_off
+        )
+
+        # Calculate polarization mismatch loss (scalar for single transmitter)
+        polarization_loss = calculate_polarization_mismatch_loss(
+            tx_polarization, tx_polarization_angle, rx_polarization, rx_polarization_angle
+        )
+
+        # Apply polarization loss to all elements
+        base_contribution = base_contribution * polarization_loss
+
+        # Add harmonic contributions if requested
+        if include_harmonics and harmonics:
+            base_freq = instru_sat.get_center_freq()
+            # Calculate harmonic contribution for each frequency point
+            harmonic_contribution = calculate_harmonic_contribution(
+                base_freq, base_contribution, harmonics, freq, instru_tel.get_bandwidth()
+            )
+            final_result = base_contribution + harmonic_contribution
+
+            return final_result
+
+        return base_contribution
+
+    except Exception as e:
+        print(f"❌ ERROR in sat_link_budget_comprehensive_vectorized: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return zeros with same shape as input
+        return np.zeros_like(freq)
+
+
+def sat_link_budget_comprehensive(
+    dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, transmitter,
+    freq, rx_polarization: str = 'linear', rx_polarization_angle: float = 0.0,
+    beam_avoid=0.0, turn_off=False, include_harmonics: bool = True
+):
+    """
+    Comprehensive satellite link budget calculation with polarization and harmonics.
+
+    This function automatically chooses between vectorized and non-vectorized versions
+    based on input types for optimal performance.
+
+    Args:
+        dec_tel, caz_tel: Telescope coordinates
+        instru_tel: Telescope instrument
+        dec_sat, caz_sat: Satellite coordinates
+        rng_sat: Satellite range
+        transmitter: Transmitter object with polarization and harmonics
+        freq: Frequency
+        rx_polarization: Receiver polarization type
+        rx_polarization_angle: Receiver polarization angle in degrees
+        beam_avoid: Beam avoidance angle
+        turn_off: Whether to turn off satellites
+        include_harmonics: Whether to include harmonic contributions
+
+    Returns:
+        Comprehensive link budget with all effects included
+    """
+    # Check if inputs are arrays (vectorized case)
+    inputs_are_arrays = (
+        hasattr(dec_tel, '__len__') or hasattr(dec_sat, '__len__') or
+        hasattr(freq, '__len__') or hasattr(rng_sat, '__len__')
+    )
+
+    if inputs_are_arrays:
+        # Use vectorized version for better performance with arrays
+        return sat_link_budget_comprehensive_vectorized(
+            dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, transmitter, freq,
+            rx_polarization=rx_polarization, rx_polarization_angle=rx_polarization_angle,
+            beam_avoid=beam_avoid, turn_off=turn_off, include_harmonics=include_harmonics
+        )
+    else:
+        # Use original non-vectorized version for single-point calculations
+        # Extract transmitter parameters
+        instru_sat = transmitter.get_instrument()
+        tx_polarization = transmitter.get_polarization()
+        tx_polarization_angle = transmitter.get_polarization_angle()
+        harmonics = transmitter.get_harmonics() if include_harmonics else []
+
+        # Calculate base link budget with polarization
+        base_contribution = sat_link_budget_with_polarization(
+            dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
+            tx_polarization, tx_polarization_angle, rx_polarization, rx_polarization_angle,
+            beam_avoid=beam_avoid, turn_off=turn_off
+        )
+
+        # Add harmonic contributions if requested
+        if include_harmonics and harmonics:
+            base_freq = instru_sat.get_center_freq()
+            harmonic_contribution = calculate_harmonic_contribution(
+                base_freq, base_contribution, harmonics, freq, instru_tel.get_bandwidth()
+            )
+            return base_contribution + harmonic_contribution
+
+        return base_contribution
+
+
+def link_budget_doppler_transmitter(
+    dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, transmitter,
+    freq, radial_velocities=None, rx_polarization: str = 'linear',
+    rx_polarization_angle: float = 0.0, beam_avoid=0.0, turn_off=False,
+    include_harmonics: bool = True
+):
+    """
+    Combined link budget function that applies BOTH Doppler correction AND enhanced transmitter characteristics.
+
+    This function is the ultimate combination that handles:
+    1. Doppler frequency shift correction (physics-based)
+    2. Enhanced transmitter characteristics (polarization + harmonics)
+    3. Beam avoidance and other standard features
+
+    Args:
+        dec_tel, caz_tel: Telescope coordinates (declination, cos(azimuth))
+        instru_tel: Telescope instrument object
+        dec_sat, caz_sat: Satellite coordinates (declination, cos(azimuth))
+        rng_sat: Satellite ranges (distances)
+        transmitter: Transmitter object with polarization and harmonics
+        freq: Frequencies (Hz)
+        radial_velocities: Radial velocities of satellites (m/s, positive = moving away)
+                          If None, no Doppler correction is applied
+        rx_polarization: Receiver polarization type ('linear' or 'circular')
+        rx_polarization_angle: Receiver polarization angle in degrees
+        beam_avoid: Beam avoidance angle in degrees
+        turn_off: Whether to turn off satellites in beam avoidance zone
+        include_harmonics: Whether to include harmonic contributions
+
+    Returns:
+        result: Link budget values with BOTH Doppler correction AND enhanced transmitter characteristics
+    """
+    # Extract transmitter parameters for enhanced characteristics
+    instru_sat = transmitter.get_instrument()
+
+    # STEP 1: Apply Doppler correction using the full physics from lnk_bdgt_with_doppler_correction
+    if radial_velocities is not None:
+        # Use the sophisticated Doppler correction function that includes:
+        # - Relativistic Doppler factor: sqrt((1+beta)/(1-beta))
+        # - Doppler power correction: (f'/f)^2
+        # - Full coordinate transformations and beam avoidance logic
+        doppler_corrected_result = lnk_bdgt_with_doppler_correction(
+            dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
+            radial_velocities=radial_velocities, beam_avoid=beam_avoid, turn_off=turn_off
+        )
+    else:
+        # No Doppler correction - use standard vectorized link budget
+        doppler_corrected_result = sat_link_budget_vectorized(
+            dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
+            beam_avoid=beam_avoid, turn_off=turn_off
+        )
+
+    # STEP 2: Apply enhanced transmitter characteristics using sat_link_budget_comprehensive
+    # This handles polarization mismatch loss and harmonic contributions
+    # The function automatically chooses vectorized vs non-vectorized based on input types
+    enhanced_result = sat_link_budget_comprehensive(
+        dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, transmitter, freq,
+        rx_polarization=rx_polarization, rx_polarization_angle=rx_polarization_angle,
+        beam_avoid=beam_avoid, turn_off=turn_off, include_harmonics=include_harmonics
+    )
+
+    # STEP 3: Combine the results intelligently
+    # The challenge: Doppler correction affects frequency domain, enhanced characteristics affect power domain
+    # We need to preserve both effects without double-counting
+
+    if radial_velocities is not None:
+        # CASE: Both Doppler AND enhanced characteristics
+        # The Doppler correction has already been applied to the frequency domain
+        # The enhanced characteristics provide the power domain corrections
+
+        # Calculate the ratio between enhanced and base results
+        # This gives us the "enhancement factor" from transmitter characteristics
+        # CRITICAL FIX: Use base result WITHOUT beam avoidance to get pure enhancement factor
+        # The doppler_corrected_result already has beam avoidance applied
+        base_result_no_beam_avoid = sat_link_budget_vectorized(
+            dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, instru_sat, freq,
+            beam_avoid=0.0, turn_off=False
+        )
+
+        # Calculate enhanced result without beam avoidance for pure enhancement factor
+        enhanced_result_no_beam_avoid = sat_link_budget_comprehensive(
+            dec_tel, caz_tel, instru_tel, dec_sat, caz_sat, rng_sat, transmitter, freq,
+            rx_polarization=rx_polarization, rx_polarization_angle=rx_polarization_angle,
+            beam_avoid=0.0, turn_off=False, include_harmonics=include_harmonics
+        )
+
+        # Avoid division by zero
+        enhancement_factor = np.where(
+            base_result_no_beam_avoid > 0,
+            enhanced_result_no_beam_avoid / base_result_no_beam_avoid,
+            1.0
+        )
+
+        # Apply the enhancement factor to the Doppler-corrected result
+        # This preserves both the Doppler frequency correction AND the enhanced power characteristics
+        final_result = doppler_corrected_result * enhancement_factor
+
+        # Log the combination for debugging
+        print("🔄 Combined Doppler correction + Enhanced transmitter characteristics")
+        print("   • Doppler correction: Applied relativistic physics")
+        print("   • Enhanced characteristics: Polarization + harmonics")
+        print("   • Combination method: Doppler result × Enhancement factor")
+
+    else:
+        # CASE: Only enhanced characteristics (no Doppler)
+        # Use the enhanced result directly
+        final_result = enhanced_result
+        print("🔌 Applied enhanced transmitter characteristics only (no Doppler correction)")
+
+    return final_result

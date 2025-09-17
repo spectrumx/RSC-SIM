@@ -1,8 +1,10 @@
 # Modeling the result of a radio astronomy observation
 #
-# This notebook uses the Python modules to model the resulting power
+# This script uses the Python modules to model the resulting power
 # levels seen by a radio telescope - the Westford antenna - when observing an
 # astronomical object such as Cas A.
+
+# This script is the same with tuto_radiomdl.py, but use newly generated Arrow files from the data creation scripts for different time span  # noqa: E501
 
 import sys
 import os
