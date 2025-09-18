@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "RSC-SIM"
-version = "1.4.0"
+version = "1.5.0"
 description = "A Python package for radio modeling calculations"
 readme = "README.md"
 license = {text = "MIT"}
@@ -30,6 +30,9 @@ dependencies = [
     "pyarrow>=6.0.0",
     "numba>=0.56.0",
     "matplotlib>=3.5.0",
+    "skyfield>=1.40",
+    "pyproj>=3.0.0",
+    "sgp4>=2.0.0",
 ]
 
 [project.optional-dependencies]
