@@ -1,12 +1,12 @@
 # Modeling the result of a radio astronomy observation
 #
-# This script uses the Python modules to model the resulting power
+# This notebook uses the Python modules to model the resulting power
 # levels seen by a radio telescope - the Westford antenna - when observing an
 # astronomical object such as Cas A.
 #
-# This doppler Python script extends `tuto_radiomdl.py` with Doppler effect analysis and compensation.
-# It includes automatic risk assessment for satellite interference, radial velocity calculations,
-# and physics-based Doppler correction in the frequency domain for more accurate satellite interference predictions
+# Advanced radio astronomy observation modeling with enhanced physics
+# including Doppler effect correction and realistic transmitter
+# characteristics modeling, extending `tuto_radiomdl_doppler.py`
 
 import sys
 import os
@@ -18,18 +18,21 @@ import matplotlib.pyplot as plt
 # Add the src directory to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src'))
 
-from radio_types import Antenna, Instrument, Observation, Constellation, Trajectory  # noqa: E402
+from radio_types import Antenna, Instrument, Observation, Constellation, Trajectory, Transmitter  # noqa: E402
 from astro_mdl import (  # noqa: E402
     estim_casA_flux, power_to_temperature, temperature_to_power,
     antenna_mdl_ITU, estim_temp
 )
 from sat_mdl import (  # noqa: E402
     sat_link_budget_vectorized,
-    # get_doppler_impact_on_observation,
     lnk_bdgt_with_doppler_correction,
     calculate_radial_velocities_vectorized,
     analyze_doppler_statistics,
-    print_doppler_statistical_summary
+    print_doppler_statistical_summary,
+    calculate_polarization_mismatch_loss,
+    calculate_harmonic_contribution,
+    sat_link_budget_comprehensive_vectorized,
+    link_budget_doppler_transmitter
 )
 from obs_mdl import model_observed_temp  # noqa: E402
 import antenna_pattern  # noqa: E402
@@ -399,7 +402,6 @@ file_traj_sats_path = os.path.join(
 )
 
 # Load satellite data for analysis
-print("Loading satellite data for analysis...")
 
 # Load all satellite data for analysis
 try:
@@ -423,7 +425,7 @@ all_sat_data['times'] = pd.to_datetime(all_sat_data['times'])
 
 # Define observation parameters
 observation_band_center = cent_freq  # 11.325 GHz
-observation_band_width = 30e6  # 30 MHz
+observation_band_width = bw  # 1 KHz
 
 # Run statistical analysis FIRST
 print("\n" + "="*60)
@@ -477,32 +479,198 @@ if contamination_probability > 0.4:  # Medium or High risk
     doppler_corrected_data = obs_window_data
     use_doppler_correction = True
 
+
 else:
     print("🟢 LOW RISK DETECTED - Using Standard Prediction (No Doppler Correction)")
-    print("Using all satellites with standard link budget calculation\n")
+    print("Using all satellites with standard link budget calculation")
     doppler_corrected_data = None
     use_doppler_correction = False
 
-# New constellation loading with conditional Doppler correction
+
+# transmitter: Transmitter Characteristics Analysis
+# =============================================================================
+print("\n" + "="*60)
+print("TRANSMITTER CHARACTERISTICS ANALYSIS")
+print("="*60)
+
+
+# Set up satellite transmitters with different characteristics
+def setup_enhanced_transmitters(sat_transmit):
+    """Set up satellite transmitters with characteristics."""
+
+    print("Setting up satellite transmitters...")
+
+    # Create transmitters with different characteristics
+    transmitters = {}
+
+    # 1. Standard transmitter (no enhancements) - baseline for comparison
+    transmitters['standard'] = Transmitter.from_instrument(
+        sat_transmit,
+        polarization='linear',
+        polarization_angle=0.0,
+        harmonics=[]
+    )
+
+    # 2. Linear polarized transmitter with harmonics
+    transmitters['linear_harmonics'] = Transmitter.from_instrument(
+        sat_transmit,
+        polarization='linear',
+        polarization_angle=45.0,
+        harmonics=[(2.0, 0.1), (3.0, 0.05), (4.0, 0.02)]
+    )
+
+    # 3. Circular polarized transmitter
+    transmitters['circular'] = Transmitter.from_instrument(
+        sat_transmit,
+        polarization='circular',
+        polarization_angle=0.0,
+        harmonics=[(2.0, 0.05), (3.0, 0.02)]
+    )
+
+    # 4. High harmonic transmitter (realistic for some satellite systems)
+    transmitters['high_harmonics'] = Transmitter.from_instrument(
+        sat_transmit,
+        polarization='linear',
+        polarization_angle=45.0,
+        harmonics=[(2.0, 0.2), (3.0, 0.1), (4.0, 0.05), (5.0, 0.02), (6.0, 0.01)]
+    )
+
+    # 5. REALISTIC SCENARIO: Starlink (circular) + Westford (linear) = 3 dB loss
+    transmitters['realistic_starlink'] = Transmitter.from_instrument(
+        sat_transmit,
+        polarization='circular',  # Starlink uses circular polarization
+        polarization_angle=0.0,   # Circular polarization angle is not relevant
+        harmonics=[(2.0, 0.1), (3.0, 0.05), (4.0, 0.02)]  # Moderate harmonics for realistic satellite
+    )
+
+    print("Transmitters created:")
+    for name, tx in transmitters.items():
+        print(f"  - {name}: {tx.get_polarization()} polarization, {len(tx.get_harmonics())} harmonics")
+
+    return transmitters
+
+
+# Create transmitters
+enhanced_transmitters = setup_enhanced_transmitters(sat_transmit)
+
+# Capture the selected transmitter early to avoid closure issues
+# This represents the actual polarization mismatch between:
+# - Starlink satellites: circular polarization (transmitter)
+# - Westford radio telescope: linear polarization (receiver)
+# Result: 3 dB polarization loss (50% power reduction)
+selected_transmitter = enhanced_transmitters['realistic_starlink']
+
+# Analyze transmitter characteristics impact
+print("\nAnalyzing transmitter characteristics impact...")
+
+# Test polarization mismatch loss for different combinations
+test_polarizations = [
+    ('linear', 0.0, 'linear', 0.0),
+    ('linear', 0.0, 'linear', 90.0),
+    ('linear', 45.0, 'linear', 45.0),
+    ('linear', 0.0, 'circular', 0.0),
+    ('circular', 0.0, 'linear', 0.0),
+    ('circular', 0.0, 'circular', 0.0)
+]
+
+print("\nPolarization Mismatch Loss Analysis:")
+print("-" * 50)
+print(f"{'TX Pol':<12} {'TX Ang':<8} {'RX Pol':<12} {'RX Ang':<8} {'Loss':<8}")
+print("-" * 50)
+
+for tx_pol, tx_ang, rx_pol, rx_ang in test_polarizations:
+    loss = calculate_polarization_mismatch_loss(tx_pol, tx_ang, rx_pol, rx_ang)
+    loss_db = 10 * np.log10(loss) if loss > 0 else -100
+    print(f"{tx_pol:<12} {tx_ang:<8.1f} {rx_pol:<12} {rx_ang:<8.1f} {loss_db:<8.1f}")
+
+# Test harmonic contributions
+print("\nHarmonic Contribution Analysis:")
+print("-" * 40)
+
+base_freq = cent_freq  # 11.325 GHz
+base_power = 1.0
+obs_freq = cent_freq
+obs_bw = bw  # 1 kHz
+
+test_harmonics = [(2.0, 0.1), (3.0, 0.05), (4.0, 0.02)]
+
+total_contribution = calculate_harmonic_contribution(
+    base_freq, base_power, test_harmonics, obs_freq, obs_bw
+)
+
+if total_contribution > 0:
+    print(f"Total harmonic contribution: {total_contribution:.3f} ({10*np.log10(total_contribution):.1f} dB)")
+else:
+    print(f"Total harmonic contribution: {total_contribution:.3f} (-inf dB)")
+
+print(f"Fundamental + harmonics: {1.0 + total_contribution:.3f} ({10*np.log10(1.0 + total_contribution):.1f} dB)")
+
+# Decision logic for transmitter characteristics
+print("\n🔍 TRANSMITTER CHARACTERISTICS DECISION:")
+
+# REALISTIC SCENARIO ANALYSIS: Starlink (circular) + Westford (linear)
+realistic_polarization_loss = abs(10*np.log10(calculate_polarization_mismatch_loss('circular', 0.0, 'linear', 0.0)))
+print("   • REALISTIC SCENARIO: Starlink (circular) + Westford (linear)")
+print(f"   • Polarization effects: {'Significant' if realistic_polarization_loss > 1 else 'Minimal'}")
+print(f"      - realistic polarization loss = {realistic_polarization_loss:.2f} dB")
+print(f"   • Harmonic effects: {'Significant' if total_contribution > 0.01 else 'Minimal'}")
+print(f"      - total harmonics contribution = {total_contribution:.6f}")
+
+# General analysis for comparison
+polarization_loss = abs(10*np.log10(calculate_polarization_mismatch_loss('linear', 0.0, 'circular', 0.0)))
+print(f"\n   • General analysis (linear-to-circular): {polarization_loss:.2f} dB")
+print(f"   • General analysis (circular-to-linear): {realistic_polarization_loss:.2f} dB")
+
+# Use realistic scenario for decision making
+use_enhanced_transmitters = total_contribution > 0.01 or realistic_polarization_loss > 1
+
+# Display conclusion based on actual decision logic
+print(f"   • Using transmitter characteristics modeling: {'Yes' if use_enhanced_transmitters else 'No (baseline)'}")
+print("      - polarization loss > 1 OR total harmonics contribution > 0.01\n")
+
+# New constellation loading with conditional Doppler correction AND transmitter characteristics
 if use_doppler_correction:
     # Apply Doppler correction for physics-based prediction
     print("Loading constellation with Doppler correction...")
 
-    # Create a custom link budget function that includes Doppler correction
-    def lnk_bdgt_with_doppler(*args, **kwargs):
-        """Link budget function with Doppler correction in frequency-domain for physics-based prediction"""
+    # Create a custom link budget function that uses the combined function
+    def lnk_bdgt_with_doppler_and_enhanced(*args, **kwargs):
+        """Link budget function with Doppler correction AND transmitter characteristics"""
+        # set very small number for beam_avoid to accept lnk_bdgt_enhanced at model_observed_temp
+        # Otherwise, model_observed_temp will always use lnk_bdgt
+        kwargs['beam_avoid'] = 1e-20
+        kwargs['turn_off'] = False
+
         # Extract radial velocities from the corrected data
-        # This is a simplified approach - in a full implementation,
-        # we would need to map the radial velocities to the specific satellite/time combinations
         if doppler_corrected_data is not None and len(doppler_corrected_data) > 0:
             # Use average radial velocity for now (simplified approach)
             avg_radial_velocity = np.mean(doppler_corrected_data['radial_velocities'])
-            return lnk_bdgt_with_doppler_correction(*args, radial_velocities=avg_radial_velocity, **kwargs)
+
+            # Use the combined function that handles BOTH effects
+            if use_enhanced_transmitters:
+                new_args = list(args[:6]) + [selected_transmitter] + [args[7]]
+                return link_budget_doppler_transmitter(
+                    *new_args,
+                    radial_velocities=avg_radial_velocity, **kwargs
+                )
+            else:
+                # Use standard Doppler correction only
+                return lnk_bdgt_with_doppler_correction(*args, radial_velocities=avg_radial_velocity, **kwargs)
         else:
-            return sat_link_budget_vectorized(*args, **kwargs)
+            # No Doppler data available
+            if use_enhanced_transmitters:
+                # Use the captured transmitter object to avoid closure issues
+                if len(args) >= 8:  # Ensure we have enough arguments
+                    new_args = list(args[:6]) + [args[7]] + [selected_transmitter]
+                    return sat_link_budget_comprehensive_vectorized(*new_args, **kwargs)
+                else:
+                    # Fallback to basic function if not enough arguments
+                    return sat_link_budget_vectorized(*args, **kwargs)
+            else:
+                return sat_link_budget_vectorized(*args, **kwargs)
 
     starlink_constellation = Constellation.from_file(
-        file_traj_sats_path, observ, sat_transmit, lnk_bdgt_with_doppler,
+        file_traj_sats_path, observ, sat_transmit, lnk_bdgt_with_doppler_and_enhanced,
         name_tag='sat',
         time_tag='timestamp',
         elevation_tag='elevations',
@@ -513,15 +681,46 @@ if use_doppler_correction:
 else:
     # No Doppler correction (low risk case)
     print("Loading constellation with standard link budget...")
-    starlink_constellation = Constellation.from_file(
-        file_traj_sats_path, observ, sat_transmit, lnk_bdgt,
-        name_tag='sat',
-        time_tag='timestamp',
-        elevation_tag='elevations',
-        azimuth_tag='azimuths',
-        distance_tag='ranges_westford',
-        filt_funcs=(filt_name, filt_el)
-    )
+
+    # Still check if transmitter characteristics should be used
+    if use_enhanced_transmitters:
+        print("   + transmitter characteristics modeling enabled")
+
+        def lnk_bdgt_enhanced(*args, **kwargs):
+            # set very small number for beam_avoid to accept lnk_bdgt_enhanced at model_observed_temp
+            # Otherwise, model_observed_temp will always use lnk_bdgt
+            kwargs['beam_avoid'] = 1e-20
+            kwargs['turn_off'] = False
+
+            if len(args) >= 8:
+                # Reorder arguments: move freq to position 6, add transmitter at position 7
+                # Use the captured transmitter object to avoid closure issues
+                new_args = list(args[:6]) + [args[7]] + [selected_transmitter]
+                return sat_link_budget_comprehensive_vectorized(*new_args, **kwargs)
+            else:
+                # Fallback to basic function if not enough arguments
+                return sat_link_budget_vectorized(*args, **kwargs)
+
+        starlink_constellation = Constellation.from_file(
+            file_traj_sats_path, observ, sat_transmit, lnk_bdgt_enhanced,
+            name_tag='sat',
+            time_tag='timestamp',
+            elevation_tag='elevations',
+            azimuth_tag='azimuths',
+            distance_tag='ranges_westford',
+            filt_funcs=(filt_name, filt_el)
+        )
+    else:
+        print("   + Standard transmitter characteristics (baseline)")
+        starlink_constellation = Constellation.from_file(
+            file_traj_sats_path, observ, sat_transmit, lnk_bdgt,
+            name_tag='sat',
+            time_tag='timestamp',
+            elevation_tag='elevations',
+            azimuth_tag='azimuths',
+            distance_tag='ranges_westford',
+            filt_funcs=(filt_name, filt_el)
+        )
 
 # plot satellites trajectory
 list_sats = starlink_constellation.get_sats_name()
@@ -551,7 +750,18 @@ if use_doppler_correction:
     print("Starting result computation (with Doppler correction for physics-based prediction)...")
 else:
     print("Starting result computation (standard prediction - low risk)...")
-result = model_observed_temp(observ, sky_mdl, starlink_constellation)
+
+# DEBUG: Check constellation before computation - no longer needed
+
+"""
+When we called model_observed_temp multiple times with the same "observ" object, it was modifying the same internal result array, causing the main result variable to be overwritten.
+.copy() is used to create a copy of the result array to avoid modifying the same array in different calls to model_observed_temp with the same object, observ
+"""  # noqa: E501
+
+if use_enhanced_transmitters:
+    result = model_observed_temp(observ, sky_mdl, starlink_constellation, beam_avoidance=True).copy()
+else:
+    result = model_observed_temp(observ, sky_mdl, starlink_constellation).copy()
 
 # The method also have a keyword `beam_avoid` that takes an angle value. If the
 # angle between the boresight of a satellite and the telescope pointing direction
@@ -564,19 +774,44 @@ def lnk_bdgt_beam_avoid(*args, **kwargs):
     return sat_link_budget_vectorized(*args, beam_avoid=10.0, turn_off=False, **kwargs)
 
 
-# Beam avoidance constellation with conditional Doppler correction
+# Beam avoidance constellation with conditional Doppler AND transmitter effects
 if use_doppler_correction:
-    # Apply Doppler correction for physics-based prediction
-    def lnk_bdgt_beam_avoid_with_doppler(*args, **kwargs):
-        """Beam avoidance link budget function with Doppler correction in frequency-domain"""
+    # Apply both Doppler correction and transmitter characteristics for physics-based prediction
+    def lnk_bdgt_beam_avoid_with_doppler_and_transmitter(*args, **kwargs):
+        """Beam avoidance link budget function with Doppler correction AND transmitter characteristics"""
+        # Add beam_avoid and turn_off parameters for beam avoidance functionality
+        kwargs['beam_avoid'] = 10.0
+        kwargs['turn_off'] = False
+
         if doppler_corrected_data is not None and len(doppler_corrected_data) > 0:
             avg_radial_velocity = np.mean(doppler_corrected_data['radial_velocities'])
-            return lnk_bdgt_with_doppler_correction(*args, radial_velocities=avg_radial_velocity, **kwargs)
+            # Use combined function for consistent physics modeling
+            if use_enhanced_transmitters:
+                # Use the captured transmitter object to avoid closure issues
+                new_args = list(args[:6]) + [selected_transmitter] + [args[7]]
+                return link_budget_doppler_transmitter(
+                    *new_args,
+                    radial_velocities=avg_radial_velocity, **kwargs
+                )
+            else:
+                # Only Doppler correction, no transmitter characteristics
+                return lnk_bdgt_with_doppler_correction(*args, radial_velocities=avg_radial_velocity, **kwargs)
         else:
-            return lnk_bdgt_beam_avoid(*args, **kwargs)
+            # No Doppler but still apply transmitter characteristics
+            if use_enhanced_transmitters:
+                # Properly handle arguments for comprehensive function
+                if len(args) >= 8:  # Ensure we have enough arguments
+                    # Use the captured transmitter object to avoid closure issues
+                    new_args = list(args[:6]) + [args[7]] + [selected_transmitter]
+                    return sat_link_budget_comprehensive_vectorized(*new_args, **kwargs)
+                else:
+                    # Fallback to basic function if not enough arguments
+                    return lnk_bdgt_beam_avoid(*args, **kwargs)
+            else:
+                return lnk_bdgt_beam_avoid(*args, **kwargs)
 
     starlink_const_beam_avoid = Constellation.from_file(
-        file_traj_sats_path, observ, sat_transmit, lnk_bdgt_beam_avoid_with_doppler,
+        file_traj_sats_path, observ, sat_transmit, lnk_bdgt_beam_avoid_with_doppler_and_transmitter,
         name_tag='sat',
         time_tag='timestamp',
         elevation_tag='elevations',
@@ -585,18 +820,44 @@ if use_doppler_correction:
         filt_funcs=(filt_name, filt_el)  # No filtering - all satellites included with correction
     )
 else:
-    # No Doppler correction (low risk case)
-    starlink_const_beam_avoid = Constellation.from_file(
-        file_traj_sats_path, observ, sat_transmit, lnk_bdgt_beam_avoid,
-        name_tag='sat',
-        time_tag='timestamp',
-        elevation_tag='elevations',
-        azimuth_tag='azimuths',
-        distance_tag='ranges_westford',
-        filt_funcs=(filt_name, filt_el)
-    )
+    # No Doppler correction but still apply transmitter characteristics if enabled
+    if use_enhanced_transmitters:
+        def lnk_bdgt_beam_avoid_with_transmitter(*args, **kwargs):
+            """Beam avoidance link budget function with transmitter characteristics only"""
+            # Add beam_avoid and turn_off parameters for beam avoidance functionality
+            kwargs['beam_avoid'] = 10.0
+            kwargs['turn_off'] = False
 
-print("Starting result_beam_avoid computation (beam avoidance)...")
+            # Properly handle arguments for comprehensive function
+            if len(args) >= 8:  # Ensure we have enough arguments
+                # Use the captured transmitter object to avoid closure issues
+                new_args = list(args[:6]) + [args[7]] + [selected_transmitter]
+                return sat_link_budget_comprehensive_vectorized(*new_args, **kwargs)
+            else:
+                # Fallback to basic function if not enough arguments
+                return lnk_bdgt_beam_avoid(*args, **kwargs)
+
+        starlink_const_beam_avoid = Constellation.from_file(
+            file_traj_sats_path, observ, sat_transmit, lnk_bdgt_beam_avoid_with_transmitter,
+            name_tag='sat',
+            time_tag='timestamp',
+            elevation_tag='elevations',
+            azimuth_tag='azimuths',
+            distance_tag='ranges_westford',
+            filt_funcs=(filt_name, filt_el)
+        )
+    else:
+        # No Doppler, no transmitter characteristics (low risk case)
+        starlink_const_beam_avoid = Constellation.from_file(
+            file_traj_sats_path, observ, sat_transmit, lnk_bdgt_beam_avoid,
+            name_tag='sat',
+            time_tag='timestamp',
+            elevation_tag='elevations',
+            azimuth_tag='azimuths',
+            distance_tag='ranges_westford',
+            filt_funcs=(filt_name, filt_el)
+        )
+
 # Use the integrated model_observed_temp function with beam_avoidance=True
 result_beam_avoid = model_observed_temp(obs_beam_avoid, sky_mdl, starlink_const_beam_avoid, beam_avoidance=True)
 
@@ -604,7 +865,6 @@ result_beam_avoid = model_observed_temp(obs_beam_avoid, sky_mdl, starlink_const_
 
 obs_src = Observation.from_dates(start_obs, stop_obs, traj_obj, westford)
 
-print("Starting result_src computation (no satellites)...")
 result_src = model_observed_temp(obs_src, sky_mdl)
 
 # With a constellation of satellites that are omni-directional and low power:
@@ -625,19 +885,59 @@ gain_pat = pd.DataFrame({
 sat_cst_gain_ant = Antenna.from_dataframe(gain_pat, sat_eta_rad, freq_band)
 sat_cst_gain_transmit = Instrument(sat_cst_gain_ant, sat_T_phy, sat_freq, sat_bw, transmit_temp, 1, [])
 
-# Constant gain constellation with conditional Doppler correction
+# Constant gain constellation with conditional Doppler AND transmitter effects
 if use_doppler_correction:
-    # Apply Doppler correction for physics-based prediction
-    def lnk_bdgt_cst_gain_with_doppler(*args, **kwargs):
-        """Constant gain link budget function with Doppler correction in frequency-domain"""
+    # Apply both Doppler correction and transmitter characteristics for physics-based prediction
+    def lnk_bdgt_cst_gain_with_doppler_and_transmitter(*args, **kwargs):
+        """Constant gain link budget function with Doppler correction AND transmitter characteristics"""
+        # Note: This is for constant gain, not beam avoidance, so no beam_avoid parameters needed
+        # set very small number for beam_avoid to accept lnk_bdgt_enhanced at model_observed_temp
+        # Otherwise, model_observed_temp will always use lnk_bdgt
+        kwargs['beam_avoid'] = 1e-20
+        kwargs['turn_off'] = False
+
         if doppler_corrected_data is not None and len(doppler_corrected_data) > 0:
             avg_radial_velocity = np.mean(doppler_corrected_data['radial_velocities'])
-            return lnk_bdgt_with_doppler_correction(*args, radial_velocities=avg_radial_velocity, **kwargs)
+            # Use combined function for consistent physics modeling
+            if use_enhanced_transmitters:
+                # Note: For constant gain, we need to create a Transmitter object from the instrument
+                # since link_budget_doppler_transmitter expects a Transmitter object
+                temp_transmitter = Transmitter.from_instrument(
+                    sat_cst_gain_transmit,
+                    polarization='circular',  # Use realistic Starlink characteristics
+                    polarization_angle=0.0,   # Circular polarization angle is not relevant
+                    harmonics=[(2.0, 0.1), (3.0, 0.05), (4.0, 0.02)]  # Realistic harmonics
+                )
+                # Use the captured transmitter object to avoid closure issues
+                new_args = list(args[:6]) + [temp_transmitter] + [args[7]]
+                return link_budget_doppler_transmitter(
+                    *new_args,
+                    radial_velocities=avg_radial_velocity, **kwargs
+                )
+            else:
+                # Only Doppler correction, no transmitter characteristics
+                return lnk_bdgt_with_doppler_correction(*args, radial_velocities=avg_radial_velocity, **kwargs)
         else:
-            return lnk_bdgt(*args, **kwargs)
+            # No Doppler but still apply transmitter characteristics
+            if use_enhanced_transmitters:
+                temp_transmitter = Transmitter.from_instrument(
+                    sat_cst_gain_transmit,
+                    polarization='circular',  # Use realistic Starlink characteristics
+                    polarization_angle=0.0,   # Circular polarization angle is not relevant
+                    harmonics=[(2.0, 0.1), (3.0, 0.05), (4.0, 0.02)]  # Realistic harmonics
+                )
+                # Properly handle arguments for comprehensive function
+                if len(args) >= 8:  # Ensure we have enough arguments
+                    new_args = list(args[:6]) + [args[7]] + [temp_transmitter]
+                    return sat_link_budget_comprehensive_vectorized(*new_args, **kwargs)
+                else:
+                    # Fallback to basic function if not enough arguments
+                    return lnk_bdgt(*args, **kwargs)
+            else:
+                return lnk_bdgt(*args, **kwargs)
 
     starlink_cst_gain_constellation = Constellation.from_file(
-        file_traj_sats_path, observ, sat_cst_gain_transmit, lnk_bdgt_cst_gain_with_doppler,
+        file_traj_sats_path, observ, sat_cst_gain_transmit, lnk_bdgt_cst_gain_with_doppler_and_transmitter,
         name_tag='sat',
         time_tag='timestamp',
         elevation_tag='elevations',
@@ -646,21 +946,72 @@ if use_doppler_correction:
         filt_funcs=(filt_name, filt_el)  # No filtering - all satellites included with correction
     )
 else:
-    # No Doppler correction (low risk case)
-    starlink_cst_gain_constellation = Constellation.from_file(
-        file_traj_sats_path, observ, sat_cst_gain_transmit, lnk_bdgt,
-        name_tag='sat',
-        time_tag='timestamp',
-        elevation_tag='elevations',
-        azimuth_tag='azimuths',
-        distance_tag='ranges_westford',
-        filt_funcs=(filt_name, filt_el)
-    )
+    # No Doppler correction but still apply transmitter characteristics if enabled
+    if use_enhanced_transmitters:
+        def lnk_bdgt_cst_gain_with_transmitter(*args, **kwargs):
+            """Constant gain link budget function with transmitter characteristics only"""
+            # Note: This is for constant gain, not beam avoidance, so no beam_avoid parameters needed
+            # set very small number for beam_avoid to accept lnk_bdgt_enhanced at model_observed_temp
+            # Otherwise, model_observed_temp will always use lnk_bdgt
+            kwargs['beam_avoid'] = 1e-20
+            kwargs['turn_off'] = False
+
+            temp_transmitter = Transmitter.from_instrument(
+                sat_cst_gain_transmit,
+                polarization='circular',  # Use realistic Starlink characteristics
+                polarization_angle=0.0,   # Circular polarization angle is not relevant
+                harmonics=[(2.0, 0.1), (3.0, 0.05), (4.0, 0.02)]  # Realistic harmonics
+            )
+            # Properly handle arguments for comprehensive function
+            if len(args) >= 8:  # Ensure we have enough arguments
+                # Use the captured transmitter object to avoid closure issues
+                new_args = list(args[:6]) + [args[7]] + [temp_transmitter]
+                return sat_link_budget_comprehensive_vectorized(*new_args, **kwargs)
+            else:
+                # Fallback to basic function if not enough arguments
+                return lnk_bdgt(*args, **kwargs)
+
+        starlink_cst_gain_constellation = Constellation.from_file(
+            file_traj_sats_path, observ, sat_cst_gain_transmit, lnk_bdgt_cst_gain_with_transmitter,
+            name_tag='sat',
+            time_tag='timestamp',
+            elevation_tag='elevations',
+            azimuth_tag='azimuths',
+            distance_tag='ranges_westford',
+            filt_funcs=(filt_name, filt_el)
+        )
+    else:
+        # No Doppler, no transmitter characteristics (low risk case)
+        starlink_cst_gain_constellation = Constellation.from_file(
+            file_traj_sats_path, observ, sat_cst_gain_transmit, lnk_bdgt,
+            name_tag='sat',
+            time_tag='timestamp',
+            elevation_tag='elevations',
+            azimuth_tag='azimuths',
+            distance_tag='ranges_westford',
+            filt_funcs=(filt_name, filt_el)
+        )
 
 obs_cst_sat_gain = Observation.from_dates(start_obs, stop_obs, traj_obj, westford)
 
-print("Starting result_cst_sat_gain computation (constant satellite gain)...")
-result_cst_sat_gain = model_observed_temp(obs_cst_sat_gain, sky_mdl, starlink_cst_gain_constellation)
+if use_enhanced_transmitters:
+    # Force beam_avoidance=True to use the link budget function instead of vectorized path
+    result_cst_sat_gain = model_observed_temp(obs_cst_sat_gain, sky_mdl, starlink_cst_gain_constellation, beam_avoidance=True)  # noqa: E501
+else:
+    result_cst_sat_gain = model_observed_temp(obs_cst_sat_gain, sky_mdl, starlink_cst_gain_constellation)
+
+# add result_original, without any effects, for comparison to the other results
+starlink_constellation_original = Constellation.from_file(
+    file_traj_sats_path, observ, sat_transmit, lnk_bdgt,
+    name_tag='sat',
+    time_tag='timestamp',
+    elevation_tag='elevations',
+    azimuth_tag='azimuths',
+    distance_tag='ranges_westford',
+    filt_funcs=(filt_name, filt_el)
+)
+
+result_original = model_observed_temp(observ, sky_mdl, starlink_constellation_original)
 
 
 # prevent log10 of negative values
@@ -689,6 +1040,11 @@ ax.plot(time_samples, 10 * safe_log10(plot_result), label="no satellites")
 plot_result = temperature_to_power(result_cst_sat_gain[:, 0, 0], bw)
 ax.plot(time_samples, 10 * safe_log10(plot_result), label="constant satellite gain")
 
+# Observation without any effects: no beam avoidance, no constellation,
+# no Doppler, and no transmitter characteristics
+plot_result = temperature_to_power(result_original[:, 0, 0], bw)
+ax.plot(time_samples, 10 * safe_log10(plot_result), label="without effects")
+
 ax.legend()
 ax.set_xlabel("time")
 ax.set_ylabel("Power [dBW]")
@@ -696,13 +1052,13 @@ ax.grid(True)
 fig.tight_layout()
 # plt.show()
 
-
 # Focusing on a specific time to see where the satellites are located compare to
 # the pointing direction of the telescope:
 
 # zoom dates
-start_zoom = datetime.strptime("2025-02-18T15:34:09.000", dateformat)
-stop_zoom = datetime.strptime("2025-02-18T15:34:49.000", dateformat)
+start_zoom = datetime.strptime("2025-02-18T15:32:40.000", dateformat)
+stop_zoom = datetime.strptime("2025-02-18T15:33:50.000", dateformat)
+
 time_samples = observ.get_time_stamps()
 time_zoom = time_samples[(time_samples >= start_zoom) & (time_samples <= stop_zoom)]
 
@@ -720,6 +1076,11 @@ ax.plot(time_zoom, 10 * np.log10(plot_result), label="no satellites")
 # Observation with constellation of constant gain
 plot_result = temperature_to_power(result_cst_sat_gain[zoom_indices, 0, 0], bw)
 ax.plot(time_zoom, 10 * np.log10(plot_result), label="constant satellite gain")
+# Observation without any effects: no beam avoidance, no constellation,
+# no Doppler, and no transmitter characteristics
+plot_result = temperature_to_power(result_original[zoom_indices, 0, 0], bw)
+ax.plot(time_zoom, 10 * np.log10(plot_result), label="without effects")
+
 ax.legend()
 ax.set_xlabel("time")
 ax.set_ylabel("Power [dBW]")
@@ -794,19 +1155,51 @@ plt.ylabel("Normalized temperature")
 # create transmitter instrument
 sat_transmit_freqs = Instrument(sat_ant, sat_T_phy, sat_freq, sat_bw, transmit_temp_freqs, new_freq_chan, [])
 
-# Frequency-dependent constellation with conditional Doppler correction
+# Frequency-dependent constellation with conditional Doppler AND transmitter effects
 if use_doppler_correction:
-    # Apply Doppler correction for physics-based prediction
-    def lnk_bdgt_freqs_with_doppler(*args, **kwargs):
-        """Frequency-dependent link budget function with Doppler correction"""
+    # Apply both Doppler correction and transmitter characteristics for physics-based prediction
+    def lnk_bdgt_freqs_with_doppler_and_transmitter(*args, **kwargs):
+        """Frequency-dependent link budget function with Doppler correction AND transmitter characteristics"""
         if doppler_corrected_data is not None and len(doppler_corrected_data) > 0:
             avg_radial_velocity = np.mean(doppler_corrected_data['radial_velocities'])
-            return lnk_bdgt_with_doppler_correction(*args, radial_velocities=avg_radial_velocity, **kwargs)
+            if use_enhanced_transmitters:
+                # Use combined function for both effects
+                # Note: For frequency-dependent case, we need to create a Transmitter object
+                temp_transmitter = Transmitter.from_instrument(
+                    sat_transmit_freqs,
+                    polarization='circular',  # Use realistic Starlink characteristics
+                    polarization_angle=0.0,   # Circular polarization angle is not relevant
+                    harmonics=[(2.0, 0.1), (3.0, 0.05), (4.0, 0.02)]  # Realistic harmonics
+                )
+                new_args = list(args[:6]) + [temp_transmitter] + [args[7]]
+                return link_budget_doppler_transmitter(
+                    *new_args,
+                    radial_velocities=avg_radial_velocity, **kwargs
+                )
+            else:
+                # Only Doppler correction, no transmitter characteristics
+                return lnk_bdgt_with_doppler_correction(*args, radial_velocities=avg_radial_velocity, **kwargs)
         else:
-            return sat_link_budget_vectorized(*args, **kwargs)
+            # No Doppler but still apply transmitter characteristics if enabled
+            if use_enhanced_transmitters:
+                temp_transmitter = Transmitter.from_instrument(
+                    sat_transmit_freqs,
+                    polarization='circular',  # Use realistic Starlink characteristics
+                    polarization_angle=0.0,   # Circular polarization angle is not relevant
+                    harmonics=[(2.0, 0.1), (3.0, 0.05), (4.0, 0.02)]  # Realistic harmonics
+                )
+                # Properly handle arguments for comprehensive function
+                if len(args) >= 8:  # Ensure we have enough arguments
+                    new_args = list(args[:6]) + [args[7]] + [temp_transmitter]
+                    return sat_link_budget_comprehensive_vectorized(*new_args, **kwargs)
+                else:
+                    # Fallback to basic function if not enough arguments
+                    return sat_link_budget_vectorized(*args, **kwargs)
+            else:
+                return sat_link_budget_vectorized(*args, **kwargs)
 
     starlink_constellation_freqs = Constellation.from_file(
-        file_traj_sats_path, observ_freqs, sat_transmit_freqs, lnk_bdgt_freqs_with_doppler,
+        file_traj_sats_path, observ_freqs, sat_transmit_freqs, lnk_bdgt_freqs_with_doppler_and_transmitter,
         name_tag='sat',
         time_tag='timestamp',
         elevation_tag='elevations',
@@ -815,24 +1208,50 @@ if use_doppler_correction:
         filt_funcs=(filt_name, filt_el)  # No filtering - all satellites included with correction
     )
 else:
-    # No Doppler correction (low risk case)
-    starlink_constellation_freqs = Constellation.from_file(
-        file_traj_sats_path, observ_freqs, sat_transmit_freqs, sat_link_budget_vectorized,
-        name_tag='sat',
-        time_tag='timestamp',
-        elevation_tag='elevations',
-        azimuth_tag='azimuths',
-        distance_tag='ranges_westford',
-        filt_funcs=(filt_name, filt_el)
-    )
+    # No Doppler correction but still apply transmitter characteristics if enabled
+    if use_enhanced_transmitters:
+        def lnk_bdgt_freqs_with_transmitter(*args, **kwargs):
+            """Frequency-dependent link budget function with transmitter characteristics only"""
+            temp_transmitter = Transmitter.from_instrument(
+                sat_transmit_freqs,
+                polarization='circular',  # Use realistic Starlink characteristics
+                polarization_angle=0.0,   # Circular polarization angle is not relevant
+                harmonics=[(2.0, 0.1), (3.0, 0.05), (4.0, 0.02)]  # Realistic harmonics
+            )
+            # Properly handle arguments for comprehensive function
+            if len(args) >= 8:  # Ensure we have enough arguments
+                new_args = list(args[:6]) + [args[7]] + [temp_transmitter]
+                return sat_link_budget_comprehensive_vectorized(*new_args, **kwargs)
+            else:
+                # Fallback to basic function if not enough arguments
+                return sat_link_budget_vectorized(*args, **kwargs)
+
+        starlink_constellation_freqs = Constellation.from_file(
+            file_traj_sats_path, observ_freqs, sat_transmit_freqs, lnk_bdgt_freqs_with_transmitter,
+            name_tag='sat',
+            time_tag='timestamp',
+            elevation_tag='elevations',
+            azimuth_tag='azimuths',
+            distance_tag='ranges_westford',
+            filt_funcs=(filt_name, filt_el)
+        )
+    else:
+        # No Doppler, no transmitter characteristics (low risk case)
+        starlink_constellation_freqs = Constellation.from_file(
+            file_traj_sats_path, observ_freqs, sat_transmit_freqs, sat_link_budget_vectorized,
+            name_tag='sat',
+            time_tag='timestamp',
+            elevation_tag='elevations',
+            azimuth_tag='azimuths',
+            distance_tag='ranges_westford',
+            filt_funcs=(filt_name, filt_el)
+        )
 
 #
 # Note: This computation is now optimized with sat_link_budget_vectorized
 # and should run much faster (around 10 seconds or less)
 # Previously took several minutes due to using default link budget function
 #
-
-print("Starting result_freqs computation...")
 
 result_freqs = model_observed_temp(observ_freqs, sky_mdl, starlink_constellation_freqs)
 
@@ -932,8 +1351,6 @@ n_el = len(elevation_grid)
 map_grid = np.zeros((n_el, n_az))
 
 # Loop over the grid for the case WITH satellites
-print("Starting map_grid computation...")
-
 for i, el in enumerate(elevation_grid):
     for j, az in enumerate(azimuth_grid):
         point_df = pd.DataFrame({
@@ -944,8 +1361,8 @@ for i, el in enumerate(elevation_grid):
         })
         traj = Trajectory(point_df)
         obs = Observation.from_dates(time_plot, time_plot, traj, westford)
-        result = model_observed_temp(obs, sky_mdl, starlink_constellation)
-        map_grid[i, j] = result[0, 0, 0]
+        sky_result = model_observed_temp(obs, sky_mdl, starlink_constellation)
+        map_grid[i, j] = sky_result[0, 0, 0]
 
 # Plotting for the case WITH satellites
 fig = plt.figure(figsize=(16, 16))
@@ -978,8 +1395,6 @@ ax.set_theta_zero_location("N")
 # Prepare output array for the case WITHOUT satellites
 map_grid_no_sat = np.zeros((n_el, n_az))
 
-print("Starting map_grid_no_sat computation...")
-
 # Loop over the grid for the case WITHOUT satellites
 for i, el in enumerate(elevation_grid):
     for j, az in enumerate(azimuth_grid):
@@ -991,8 +1406,8 @@ for i, el in enumerate(elevation_grid):
         })
         traj = Trajectory(point_df)
         obs = Observation.from_dates(time_plot, time_plot, traj, westford)
-        result = model_observed_temp(obs, sky_mdl)
-        map_grid_no_sat[i, j] = result[0, 0, 0]
+        sky_result_no_sat = model_observed_temp(obs, sky_mdl)
+        map_grid_no_sat[i, j] = sky_result_no_sat[0, 0, 0]
 
 # Plotting for the case WITHOUT satellites
 fig = plt.figure(figsize=(16, 16))
@@ -1010,4 +1425,46 @@ ax.scatter(np.radians(src_pt['azimuths']), 90 - src_pt['elevations'],
 ax.set_yticks(range(0, 91, 10))
 ax.set_yticklabels([str(x) for x in range(90, -1, -10)])
 ax.set_theta_zero_location("N")
+
+# Final Summary of Doppler Effect and Transmitter Characteristics Modeling
+# =============================================================================
+print("\n" + "="*80)
+print("FINAL SUMMARY")
+print("="*80)
+
+print("📡 Doppler Effect Analysis:")
+risk_level = 'Medium/High' if contamination_probability > 0.4 else 'Low'
+print(f"   • Risk assessment: {risk_level}")
+print(f"   • Contamination probability: {contamination_probability:.1%}")
+doppler_status = 'Yes' if use_doppler_correction else 'No'
+print(f"   • Doppler correction applied: {doppler_status}")
+
+print("\n🔌 Transmitter Characteristics Analysis:")
+enhanced_status = 'Yes' if use_enhanced_transmitters else 'No'
+print(f"   • Transmitter characteristics modeling enabled: {enhanced_status}")
+if use_enhanced_transmitters:
+    print("   • Selected transmitter: realistic_starlink (Starlink circular + Westford linear)")
+    pol_type = enhanced_transmitters['realistic_starlink'].get_polarization()
+    print(f"   • Polarization: {pol_type} (Starlink satellites)")
+    print("   • Receiver polarization: linear (Westford telescope)")
+    print(f"   • Polarization mismatch loss: {realistic_polarization_loss:.1f} dB")
+    num_harmonics = len(enhanced_transmitters['realistic_starlink'].get_harmonics())
+    print(f"   • Harmonics: {num_harmonics}")
+    harm_freqs = [f/1e9 for f in enhanced_transmitters['realistic_starlink'].get_harmonic_frequencies()]
+    print(f"   • Harmonic frequencies: {harm_freqs} GHz")
+
+print("\n🎯 Key Differences from Standard Model:")
+if use_doppler_correction:
+    print("   • Doppler shift compensation in frequency domain")
+if use_enhanced_transmitters:
+    print("   • Polarization mismatch loss modeling")
+    print("   • Harmonic contribution analysis")
+    print("   • Enhanced link budget calculations")
+    if use_doppler_correction:
+        print("   • INTEGRATED: Both effects combined in link_budget_doppler_transmitter()")
+
+print("="*80)
+print("Enhanced modeling completed successfully!")
+print("="*80)
+
 plt.show()
