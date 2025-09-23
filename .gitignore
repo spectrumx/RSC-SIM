@@ -159,3 +159,12 @@ $RECYCLE.BIN/
 *.bsp
 *.dat
 *.csv
+
+# Image files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.svg
