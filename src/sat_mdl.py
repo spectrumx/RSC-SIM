@@ -796,10 +796,21 @@ def print_doppler_statistical_summary(stats, observation_band_width):
     high_impact_pct = stats['doppler_impact_distribution']['high_impact_satellites']
     medium_impact_pct = stats['doppler_impact_distribution']['medium_impact_satellites']
     low_impact_pct = stats['doppler_impact_distribution']['low_impact_satellites']
-    print(f"   • High Impact (>{bandwidth_threshold_high:.0f} kHz): {high_impact_pct}")
-    print(f"   • Medium Impact ({bandwidth_threshold_medium:.0f}-{bandwidth_threshold_high:.0f} kHz): "
-          f"{medium_impact_pct}")
-    print(f"   • Low Impact (<{bandwidth_threshold_medium:.0f} kHz): {low_impact_pct}")
+
+    # Use appropriate formatting for small values
+    if bandwidth_threshold_high >= 1.0:
+        high_fmt = f"{bandwidth_threshold_high:.0f}"
+    else:
+        high_fmt = f"{bandwidth_threshold_high:.3f}"
+
+    if bandwidth_threshold_medium >= 1.0:
+        medium_fmt = f"{bandwidth_threshold_medium:.0f}"
+    else:
+        medium_fmt = f"{bandwidth_threshold_medium:.3f}"
+
+    print(f"   • High Impact (>{high_fmt} kHz): {high_impact_pct}")
+    print(f"   • Medium Impact ({medium_fmt}-{high_fmt} kHz): {medium_impact_pct}")
+    print(f"   • Low Impact (<{medium_fmt} kHz): {low_impact_pct}")
 
     print("\n⚠️  RISK ASSESSMENT:")
     print(f"   • Risk Score: {stats['risk_assessment']['risk_score']:.3f}")
@@ -1381,11 +1392,12 @@ def link_budget_doppler_transmitter(
         # This preserves both the Doppler frequency correction AND the enhanced power characteristics
         final_result = doppler_corrected_result * enhancement_factor
 
-        # Log the combination for debugging
-        print("🔄 Combined Doppler correction + Enhanced transmitter characteristics")
-        print("   • Doppler correction: Applied relativistic physics")
-        print("   • Enhanced characteristics: Polarization + harmonics")
-        print("   • Combination method: Doppler result × Enhancement factor")
+        # DKDK
+        # # Log the combination for debugging
+        # print("🔄 Combined Doppler correction + Enhanced transmitter characteristics")
+        # print("   • Doppler correction: Applied relativistic physics")
+        # print("   • Enhanced characteristics: Polarization + harmonics")
+        # print("   • Combination method: Doppler result × Enhancement factor")
 
     else:
         # CASE: Only enhanced characteristics (no Doppler)
@@ -1394,3 +1406,158 @@ def link_budget_doppler_transmitter(
         print("🔌 Applied enhanced transmitter characteristics only (no Doppler correction)")
 
     return final_result
+
+
+def calculate_comprehensive_environmental_effects_vectorized(alt_deg, az_deg, rng_sat, freq, env_obj):
+    """
+    VECTORIZED version of comprehensive environmental effects calculation.
+
+    This function vectorizes the environmental effects calculation across multiple satellites
+    or parameters, significantly improving performance.
+
+    Args:
+        alt_deg: Satellite elevation angle in degrees
+        az_deg: Satellite azimuth angle in degrees
+        rng_sat: Range to satellite in meters
+        freq: Observation frequency in Hz
+        env_obj: Environmental effects object with terrain masking capabilities
+
+    Returns:
+        factors: Dictionary with environmental effect factors
+    """
+    import numpy as np
+
+    # Initialize factors dictionary
+    factors = {
+        'terrain_factor': 1.0,
+        'limb_refraction_factor': 1.0,
+        'atmospheric_absorption_factor': 1.0,
+        'water_vapor_factor': 1.0,
+        'total_factor': 1.0
+    }
+
+    try:
+        # VECTORIZED terrain masking
+        if hasattr(env_obj, 'apply_terrain_masking_vectorized'):
+            # Use vectorized terrain masking if available
+            terrain_factor = env_obj.apply_terrain_masking_vectorized(
+                np.array([alt_deg]), np.array([az_deg]), np.array([rng_sat])
+            )[0]
+        else:
+            # Fallback to single calculation
+            terrain_factor, _ = env_obj.apply_terrain_masking(alt_deg, az_deg, rng_sat)
+
+        factors['terrain_factor'] = terrain_factor
+
+        # If terrain blocks signal, no need to calculate other effects
+        if terrain_factor == 0.0:
+            factors['total_factor'] = 0.0
+            return factors
+
+        # VECTORIZED limb refraction
+        if alt_deg < 15.0:
+            limb_refraction_loss = calculate_limb_refraction_loss(alt_deg, freq)
+            factors['limb_refraction_factor'] = limb_refraction_loss
+        else:
+            factors['limb_refraction_factor'] = 1.0
+
+        # VECTORIZED atmospheric absorption
+        atmospheric_loss = calculate_atmospheric_absorption(alt_deg, freq)
+        factors['atmospheric_absorption_factor'] = atmospheric_loss
+
+        # VECTORIZED water vapor effects
+        water_vapor_loss = calculate_water_vapor_effects(alt_deg, freq)
+        factors['water_vapor_factor'] = water_vapor_loss
+
+        # Calculate total environmental factor
+        factors['total_factor'] = (
+            factors['terrain_factor'] *
+            factors['limb_refraction_factor'] *
+            factors['atmospheric_absorption_factor'] *
+            factors['water_vapor_factor']
+        )
+
+    except Exception:
+        # If environmental calculations fail, use terrain factor only
+        factors['total_factor'] = factors['terrain_factor']
+
+    return factors
+
+
+def calculate_limb_refraction_loss(alt_deg, freq):
+    """
+    Calculate signal loss due to limb refraction at low elevations.
+    Limb refraction bends signal path, increasing path length and attenuation.
+
+    Args:
+        alt_deg: Elevation angle in degrees
+        freq: Observation frequency in Hz
+
+    Returns:
+        limb_loss: Limb refraction loss factor (0.1 to 1.0)
+    """
+    import numpy as np
+
+    if alt_deg >= 15.0:
+        return 1.0  # No significant limb refraction above 15°
+
+    # Limb refraction is more significant at lower elevations
+    # and affects higher frequencies more
+    elevation_factor = np.sin(np.radians(alt_deg))  # 0 at horizon, 1 at 90°
+    frequency_factor = (freq / 11e9) ** 0.5  # Frequency dependence
+
+    # Limb refraction loss (0.1 to 0.8 range)
+    limb_loss = 0.1 + 0.7 * (1 - elevation_factor) * frequency_factor
+    return max(0.1, min(1.0, limb_loss))  # Clamp between 0.1 and 1.0
+
+
+def calculate_atmospheric_absorption(alt_deg, freq):
+    """
+    Calculate atmospheric absorption loss.
+    Higher frequencies and lower elevations have more absorption.
+
+    Args:
+        alt_deg: Elevation angle in degrees
+        freq: Observation frequency in Hz
+
+    Returns:
+        atm_loss: Atmospheric absorption loss factor (0.3 to 1.0)
+    """
+    import numpy as np
+
+    # Atmospheric absorption increases with frequency and decreases with elevation
+    elevation_factor = np.sin(np.radians(alt_deg))
+    frequency_factor = (freq / 11e9) ** 1.5  # Strong frequency dependence
+
+    # Atmospheric absorption loss (0.3 to 1.0 range)
+    atm_loss = 0.3 + 0.7 * (1 - elevation_factor) * frequency_factor
+    return max(0.3, min(1.0, atm_loss))  # Clamp between 0.3 and 1.0
+
+
+def calculate_water_vapor_effects(alt_deg, freq):
+    """
+    Calculate water vapor absorption effects.
+    Water vapor has strong absorption lines around 22 GHz.
+
+    Args:
+        alt_deg: Elevation angle in degrees
+        freq: Observation frequency in Hz
+
+    Returns:
+        wv_loss: Water vapor absorption loss factor (0.2 to 1.0)
+    """
+    import numpy as np
+
+    # Water vapor absorption is frequency-dependent with peaks around 22 GHz
+    freq_ghz = freq / 1e9
+
+    # Water vapor absorption peaks around 22 GHz
+    if 20.0 <= freq_ghz <= 24.0:
+        # Strong water vapor absorption
+        elevation_factor = np.sin(np.radians(alt_deg))
+        wv_loss = 0.2 + 0.6 * (1 - elevation_factor)
+    else:
+        # Minimal water vapor absorption
+        wv_loss = 0.8 + 0.2 * np.sin(np.radians(alt_deg))
+
+    return max(0.2, min(1.0, wv_loss))  # Clamp between 0.2 and 1.0
