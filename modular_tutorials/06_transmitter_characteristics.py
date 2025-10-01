@@ -1233,7 +1233,7 @@ def main_realistic():
     test_loss_db = 10 * np.log10(test_loss) if test_loss > 0 else -100
     print(f"   • Circular to Linear polarization loss: {test_loss:.3f} ({test_loss_db:.1f} dB)")
     print("   • Expected: ~0.5 (3.0 dB loss)")
-    if abs(test_loss_db - 3.0) < 0.1:
+    if abs(test_loss_db) - 3.0 < 0.1:
         print("   • ✅ Polarization loss calculation is working correctly")
     else:
         print("   • ⚠️  Polarization loss calculation may have issues")

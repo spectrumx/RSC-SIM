@@ -34,7 +34,7 @@ import antenna_pattern  # noqa: E402
 # `DataFrame` structure with columns `alphas`, `betas` and `gains`, containing
 # the gain values and their angle coordinates (α,β), the estimated
 # radiation efficiency and the frequency band where the model of antenna defined
-# is valid. α∈[0,180] and β∈[0,360[ are defined such that when
+# is valid. α∈[0,180] (elevation angle) and β∈[0,360] (azimuth angle) are defined such that when
 # the antenna is pointing at the horizon, β=0 gives a vertical slice of the
 # pattern, with α>0 oriented towards the ground.
 #
