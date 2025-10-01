@@ -4,7 +4,7 @@ This directory contains a series of focused, modular tutorials for learning radi
 
 <br />
 
-These modular tutorials from 01 to 04 are based on `tutorial/tuto_radiomdl.py`. Tutorial 05 is in part related to `tutorial/tuto_radiomdl_doppler.py`. Tutorial 06 is in part related to `tutorial/tuto_radiomdl_transmitter.py`.
+These modular tutorials from 01 to 04 are based on `tutorial/tuto_radiomdl.py`. Tutorial 05 is in part related to `tutorial/tuto_radiomdl_doppler.py`. Tutorial 06 is in part related to `tutorial/tuto_radiomdl_transmitter.py`. Tutorial 07 is in part related to `tutorial/tuto_radiomdl_environment.py`.
 
 ## 📁 Directory Structure
 
@@ -17,6 +17,7 @@ modular_tutorials/
 ├── 04_power_spectral_density.py       # Frequency analysis
 ├── 05_doppler_effect.py               # Doppler effect analysis and compensation
 ├── 06_transmitter_characteristics.py  # Transmitter characteristics
+├── 07_environment_effects.py          # Environmental effects analysis
 └── shared/                            # Shared utilities
     ├── __init__.py                    # Package initialization
     ├── config.py                      # Configuration parameters
@@ -97,6 +98,20 @@ modular_tutorials/
 - Implement transmitter modeling with realistic characteristics
 - Compare interference predictions with and without transmitter characteristics
 - Analyze realistic scenarios (Starlink circular + Westford linear = 3 dB loss)
+
+### **07: Environmental Effects Analysis**
+**File:** `07_environment_effects.py`
+
+**Focus:** Environmental effects and realistic propagation modeling
+
+**Learning Objectives:**
+- Understand terrain masking and line-of-sight obstruction effects
+- Learn atmospheric refraction modeling and correction techniques
+- Explore water vapor absorption and emission in radio astronomy
+- Consider limb refraction for space-to-space signal path atmospheric effects
+- Implement comprehensive environmental effects in link budget calculations
+- Analyze realistic scenarios with terrain and atmospheric effects
+- Compare interference predictions with and without environmental effects
 
 
 ## 🛠️ Shared Utilities
