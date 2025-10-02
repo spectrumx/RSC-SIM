@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 # =============================================================================
 
 # Base directory for tutorial data
-TUTORIAL_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "tutorial", "data")
+TUTORIAL_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "research_tutorials", "data")  # noqa: E501
 
 # Antenna pattern file
 ANTENNA_PATTERN_FILE = os.path.join(TUTORIAL_DATA_DIR, "single_cut_res.cut")

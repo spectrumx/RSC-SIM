@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "RSC-SIM"
-version = "1.6.0"
-description = "A Python package for radio modeling calculations"
+version = "1.6.2"
+description = "A Python framework for radio observation modeling and simulation"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
@@ -20,7 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Radio Astronomy",
 ]
 requires-python = ">=3.9"
 dependencies = [

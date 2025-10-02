@@ -114,7 +114,7 @@ def main():
 
     # Load source trajectory from file
     source_trajectory = Trajectory.from_file(
-        os.path.join(os.path.dirname(__file__), "..", "tutorial", "data",
+        os.path.join(os.path.dirname(__file__), "..", "research_tutorials", "data",
                      "casA_trajectory_Westford_2025-02-18T15_00_00.000_2025-02-18T15_45_00.000.arrow"),
         time_tag='time_stamps',
         elevation_tag='altitudes',

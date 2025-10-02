@@ -176,7 +176,7 @@ def demonstrate_advanced_environmental_effects():
     # Initialize environmental effects modeling
     script_dir = os.path.dirname(os.path.abspath(__file__))
     dem_file = os.path.join(
-        script_dir, "..", "tutorial", "data",
+        script_dir, "..", "research_tutorials", "data",
         "USGS_OPR_MA_CentralEastern_2021_B21_be_19TBH294720.tif"
     )
     environment = AdvancedEnvironmentalEffects(
@@ -464,7 +464,7 @@ def practical_environmental_effects_with_real_data():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     environmental_config = {
         'dem_file': os.path.join(
-            script_dir, "..", "tutorial", "data",
+            script_dir, "..", "research_tutorials", "data",
             "USGS_OPR_MA_CentralEastern_2021_B21_be_19TBH294720.tif"
         ),
         'antenna_lat': westford_lat,
@@ -493,7 +493,7 @@ def practical_environmental_effects_with_real_data():
 
     # Load real antenna pattern
     print("\nLoading real Westford antenna pattern...")
-    file_pattern_path = os.path.join(script_dir, "..", "tutorial", "data", "single_cut_res.cut")
+    file_pattern_path = os.path.join(script_dir, "..", "research_tutorials", "data", "single_cut_res.cut")
 
     # Antenna parameters
     eta_rad = 0.45  # radiation efficiency
@@ -527,7 +527,7 @@ def practical_environmental_effects_with_real_data():
     # Load Cas A trajectory
     print("\nLoading Cas A trajectory...")
     cas_a_file = os.path.join(
-        script_dir, "..", "tutorial", "data",
+        script_dir, "..", "research_tutorials", "data",
         f"casA_trajectory_Westford_{start_window_str}_{stop_window_str}.arrow"
     )
     print(f"  Looking for Cas A file: {cas_a_file}")
@@ -669,7 +669,7 @@ def practical_environmental_effects_with_real_data():
     stop_window_str = stop_window.replace(":", "_")
 
     file_traj_sats_path = os.path.join(
-        script_dir, "..", "tutorial", "data",
+        script_dir, "..", "research_tutorials", "data",
         f"Starlink_trajectory_Westford_{start_window_str}_{stop_window_str}.arrow"
     )
 

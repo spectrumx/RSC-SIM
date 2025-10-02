@@ -79,9 +79,9 @@ def main():
     print("Modeling frequency-domain characteristics of radio observations")
     print()
 
-    # Get path to data files (located in tutorial/data/)
+    # Get path to data files (located in research_tutorials/data/)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(os.path.dirname(script_dir), "tutorial", "data")
+    data_dir = os.path.join(os.path.dirname(script_dir), "research_tutorials", "data")
 
     # Time window for analysis
     start_window = "2025-02-18T15:00:00.000"

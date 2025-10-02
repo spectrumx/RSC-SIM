@@ -9,7 +9,7 @@ This software grew and evolved out of the RadioMdl codebase, a Julia package cre
 ## Requirements
 
 - **Python**: 3.9 or later
-- **Dependencies**: numpy, scipy, pandas, pyarrow, numba
+- **Dependencies**: numpy, scipy, pandas, pyarrow, numba, matplotlib, skyfield, pyproj, sgp4, rasterio, ipykernel
 
 ## Modules (at src/ directory)
 
@@ -21,16 +21,17 @@ This software grew and evolved out of the RadioMdl codebase, a Julia package cre
 - `radio_io.py`: Radio I/O operations
 - `radio_types.py`: Radio data types
 - `sat_mdl.py`: Satellite modeling
+- `env_mdl.py`: Environment effects modeling
 
 ## Tutorial Resources
 
-### `modular_tutorials/` directory: Recommanded for learning
+### `educational_tutorials/` directory: Recommanded for learning
 
-This directory contains a series of focused, modular tutorials for learning radio astronomy observation modeling with the RSC-SIM framework. Each tutorial builds upon the previous ones, providing a progressive learning experience. Details can be found in the `README.md` inside the `modular_tutorials/`.
+This directory contains a series of focused, educational tutorials for learning radio astronomy observation modeling with the RSC-SIM framework. Each tutorial builds upon the previous ones, providing a progressive learning experience. Details can be found in the `README.md` inside the `educational_tutorials/`.
 
-### `tutorial/` directory
+### `research_tutorials/` directory
 
-This contains additional learning resources and examples and serves as a reference implementation for the modeling and simulation of radio astronomy observations. It consists of Jupyter Notebooks and their CLI scripts, and also includes data creation scripts for trajectory files of a star and satellite at the `tutorial/data_creation/` directory. Details can be found at the `README.md` inside the `tutorial/` directory.
+This contains additional learning resources and examples and serves as a reference implementation for the modeling and simulation of radio astronomy observations. It consists of Jupyter Notebooks and their CLI scripts, and also includes data creation scripts for trajectory files of a star and satellite at the `research_tutorials/data_creation/` directory. Details can be found at the `README.md` inside the `research_tutorials/` directory.
 
 ## Installation
 
@@ -118,7 +119,7 @@ deactivate
 
 After installation, you can run the Jupyter notebooks directly in VS Code:
 
-1. Open a `.ipynb` file from the `tutorial/` directories
+1. Open a `.ipynb` file from the `research_tutorials/` directories
 2. VS Code will automatically detect it as a Jupyter notebook
 3. Select your Python interpreter (the one from your virtual environment)
 4. Run cells using Shift+Enter or the Run button
@@ -128,10 +129,16 @@ After installation, you can run the Jupyter notebooks directly in VS Code:
 
 The package automatically installs the following dependencies:
 - `numpy>=1.21.0` - Numerical computing
-- `scipy>=1.7.0` - Scientific computing
+- `scipy>=1.5.0` - Scientific computing
 - `pandas>=1.3.0` - Data manipulation
 - `pyarrow>=6.0.0` - Data serialization
 - `numba>=0.56.0` - JIT compilation for performance
+- `matplotlib>=3.5.0` - Plotting and visualization
+- `skyfield>=1.40` - Astronomical calculations and ephemeris
+- `pyproj>=3.0.0` - Geospatial coordinate transformations
+- `sgp4>=2.0.0` - Satellite orbit propagation
+- `rasterio>=1.3.0` - Geospatial raster data I/O
+- `ipykernel>=6.0.0` - Jupyter notebook kernel support
 
 ## Usage
 
