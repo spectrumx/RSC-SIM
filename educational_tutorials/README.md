@@ -1,15 +1,14 @@
-# RSC-SIM Modular Tutorials
+# RSC-SIM Educational Tutorials
 
-This directory contains a series of focused, modular tutorials for learning radio astronomy observation modeling with the RSC-SIM framework. Each tutorial builds upon the previous ones, providing a progressive learning experience.
+This directory contains a series of focused, educational tutorials for learning radio astronomy observation modeling with the RSC-SIM framework. Each tutorial builds upon the previous ones, providing a progressive learning experience.
 
 <br />
 
-These modular tutorials from 01 to 04 are based on `tutorial/tuto_radiomdl.py`. Tutorial 05 is in part related to `tutorial/tuto_radiomdl_doppler.py`. Tutorial 06 is in part related to `tutorial/tuto_radiomdl_transmitter.py`. Tutorial 07 is in part related to `tutorial/tuto_radiomdl_environment.py`.
 
 ## 📁 Directory Structure
 
 ```
-modular_tutorials/
+educational_tutorials/
 ├── README.md                          # This file
 ├── 01_basic_observation.py            # Basic radio astronomy concepts
 ├── 02_satellite_interference.py       # Satellite modeling
@@ -34,6 +33,8 @@ modular_tutorials/
 
 **Focus:** Fundamental concepts and basic observation setup
 
+**Related to** `research_tutorials/tuto_radiomdl.py`
+
 **Learning Objectives:**
 - Understand radio telescope instrument components
 - Learn ON/OFF source observation techniques
@@ -46,6 +47,8 @@ modular_tutorials/
 
 **Focus:** Satellite constellation modeling and interference assessment
 
+**Related to** `research_tutorials/tuto_radiomdl.py`
+
 **Learning Objectives:**
 - Set up satellite constellation models
 - Understand beam avoidance techniques
@@ -56,6 +59,8 @@ modular_tutorials/
 **File:** `03_sky_mapping.py`
 
 **Focus:** Full sky mapping and spatial analysis
+
+**Related to** `research_tutorials/tuto_radiomdl.py`
 
 **Learning Objectives:**
 - Create sky temperature maps
@@ -68,6 +73,8 @@ modular_tutorials/
 
 **Focus:** Frequency domain analysis and spectral characterization
 
+**Related to** `research_tutorials/tuto_radiomdl.py`
+
 **Learning Objectives:**
 - Understand PSD concepts
 - Analyze frequency-dependent interference
@@ -78,6 +85,8 @@ modular_tutorials/
 **File:** `05_doppler_effect.py`
 
 **Focus:** Doppler effect analysis and frequency-domain compensation
+
+**Related to** `tuto_radiomdl_direct.py/tuto_radiomdl_doppler.py`
 
 **Learning Objectives:**
 - Analyze Doppler shifts in satellite trajectories
@@ -91,6 +100,8 @@ modular_tutorials/
 
 **Focus:** Transmitter characteristics and realistic interference modeling
 
+**Related to** `tuto_radiomdl_direct.py/tuto_radiomdl_transmitter.py`
+
 **Learning Objectives:**
 - Understand polarization mismatch between satellite transmitters and radio telescopes
 - Learn to calculate and visualize polarization loss effects
@@ -103,6 +114,8 @@ modular_tutorials/
 **File:** `07_environment_effects.py`
 
 **Focus:** Environmental effects and realistic propagation modeling
+
+**Related to** `tuto_radiomdl_direct.py/tuto_radiomdl_environment.py`
 
 **Learning Objectives:**
 - Understand terrain masking and line-of-sight obstruction effects
@@ -147,12 +160,12 @@ The `shared/` directory contains reusable components:
 ### **Prerequisites**
 1. **Python Environment:** Python 3.9+ with required packages
 2. **RSC-SIM Installation:** Ensure the main package is installed
-3. **Data Files:** Verify tutorial data files are available in `../tutorial/data/`
+3. **Data Files:** Verify tutorial data files are available in `../research_tutorials/data/`
 
 ### **Running**
 ```bash
-# Navigate to the modular_tutorials directory
-cd modular_tutorials
+# Navigate to the educational_tutorials directory
+cd educational_tutorials
 
 # Run the first tutorial
 python 01_basic_observation.py
@@ -168,7 +181,7 @@ python3 01_basic_observation.py
 **Import Errors:**
 ```bash
 # Ensure you're in the correct directory
-cd modular_tutorials
+cd educational_tutorials
 
 # Check Python path includes src directory
 python -c "import sys; print('\\n'.join(sys.path))"
@@ -177,7 +190,7 @@ python -c "import sys; print('\\n'.join(sys.path))"
 **Missing Data Files:**
 ```bash
 # Verify data files exist
-ls ../tutorial/data/
+ls ../research_tutorials/data/
 ```
 
 **Plotting Issues:**

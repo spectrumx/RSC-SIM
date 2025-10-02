@@ -103,7 +103,7 @@ print("\nStep 1: Loading satellite trajectory data...")
 
 # Load satellite trajectories
 file_traj_sats_path = os.path.join(
-    os.path.dirname(__file__), "..", "tutorial", "data",
+    os.path.dirname(__file__), "..", "research_tutorials", "data",
     f"Starlink_trajectory_Westford_{start_window_str}_{stop_window_str}.arrow"
 )
 
@@ -556,7 +556,7 @@ print("="*80)
 
 print("\nStep 1: Setting up observation parameters for Doppler compensation...")
 
-# Define observation parameters (same as in the main tutorial)
+# Define observation parameters (same as in the main research_tutorials)
 observation_band_center = cent_freq  # 11.325 GHz
 observation_band_width = 30e6  # 30 MHz
 
@@ -564,7 +564,7 @@ observation_band_width = 30e6  # 30 MHz
 eta_rad = 0.45
 freq_band = (10e9, 12e9)  # in Hz
 file_pattern_path = os.path.join(
-    os.path.dirname(__file__), "..", "tutorial", "data", "single_cut_res.cut"
+    os.path.dirname(__file__), "..", "research_tutorials", "data", "single_cut_res.cut"
 )
 tel_ant = Antenna.from_file(
     file_pattern_path,
@@ -610,7 +610,7 @@ sat_transmit = Instrument(sat_ant, sat_T_phy, sat_freq, sat_bw, transmit_temp, 1
 
 # Create source trajectory (simplified for demonstration)
 file_traj_obj_path = os.path.join(
-    os.path.dirname(__file__), "..", "tutorial", "data",
+    os.path.dirname(__file__), "..", "research_tutorials", "data",
     f"casA_trajectory_Westford_{start_window_str}_{stop_window_str}.arrow"
 )
 

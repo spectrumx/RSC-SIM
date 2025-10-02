@@ -504,7 +504,7 @@ def setup_telescope_instrument():
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
     # load telescope antenna from external file
-    file_pattern_path = os.path.join(script_dir, "..", "tutorial", "data", "single_cut_res.cut")
+    file_pattern_path = os.path.join(script_dir, "..", "research_tutorials", "data", "single_cut_res.cut")
 
     if not os.path.exists(file_pattern_path):
         print(f"Warning: Antenna pattern file not found at {file_pattern_path}")
@@ -573,7 +573,7 @@ def setup_observation(westford):
 
     # load telescope antenna
     file_traj_obj_path = os.path.join(
-        script_dir, "..", "tutorial", "data",
+        script_dir, "..", "research_tutorials", "data",
         f"casA_trajectory_Westford_{start_window_str}_{stop_window_str}.arrow"
     )
 
@@ -761,7 +761,7 @@ def setup_satellite_constellation(observ, realistic_transmitter, start_obs, stop
 
     # satellites trajectories during the observation
     file_traj_sats_path = os.path.join(
-        script_dir, "..", "tutorial", "data",
+        script_dir, "..", "research_tutorials", "data",
         f"Starlink_trajectory_Westford_{start_window_str}_{stop_window_str}.arrow"
     )
 
