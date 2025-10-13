@@ -17,6 +17,7 @@ educational_tutorials/
 ├── 05_doppler_effect.py               # Doppler effect analysis and compensation
 ├── 06_transmitter_characteristics.py  # Transmitter characteristics
 ├── 07_environment_effects.py          # Environmental effects analysis
+├── 08_direct_aggregate_effects.py     # Direct vs aggregate satellite effects
 └── shared/                            # Shared utilities
     ├── __init__.py                    # Package initialization
     ├── config.py                      # Configuration parameters
@@ -73,7 +74,7 @@ educational_tutorials/
 
 **Focus:** Frequency domain analysis and spectral characterization
 
-**Related to** `research_tutorials/tuto_radiomdl.py`
+**Related to** `tuto_radiomdl_direct.py/tuto_radiomdl.py`
 
 **Learning Objectives:**
 - Understand PSD concepts
@@ -125,6 +126,25 @@ educational_tutorials/
 - Implement comprehensive environmental effects in link budget calculations
 - Analyze realistic scenarios with terrain and atmospheric effects
 - Compare interference predictions with and without environmental effects
+
+### **08: Direct vs Aggregate Satellite Effects Analysis**
+**File:** `08_direct_aggregate_effects.py`
+
+**Focus:** Core distinction between direct (one-to-one) and aggregate (many-to-one) satellite effects
+
+**Related to** `tuto_radiomdl_direct.py/tuto_radiomdl_direct.py`
+
+**Learning Objectives:**
+- Understand the difference between direct (one-to-one) and aggregate (many-to-one) satellite effects
+- Learn to implement single satellite direct effects analysis
+- Learn to implement many-to-one aggregate interference calculations
+- Visualize direct vs aggregate interference patterns
+
+**Key Concepts:**
+- **Direct Effects:** RF interaction of a specific emitter (single satellite) and receiver
+- **Aggregate Effects:** Interaction of an ensemble of emitters (multiple satellites) with a given receiver
+- **Architecture Shift:** From one-to-one to many-to-one interference calculations
+- **Visual Comparison:** Direct visualization of interference enhancement patterns
 
 
 ## 🛠️ Shared Utilities
