@@ -1,20 +1,28 @@
 ### Directory Structure
 
 The Python implementation is organized as follows:
+- **`tuto_radiomdl.ipynb`**: Jupyter notebook for python which produces the same results with the Julia notebook (`Julia/test/tuto_mdl_obs_modified.ipynb`)
 
-- **tuto_radiomdl.ipynb**: Jupyter notebook for python which produces the same results with the Julia notebook (`Julia/test/tuto_mdl_obs_modified.ipynb`)
+- **`tuto_radiomdl.py`**: Python script to run in a command line interface (CLI) that is equivalent to the above notebook
 
-- **tuto_radiomdl.py**: Python script to run in a command line interface (CLI) that is equivalent to the above notebook
+- **`tuto_radiomdl_250401.ipynb and .py`**: Testing Jupyter notebook and python script with newly generated Arrow files from the data creation scripts for different time span (see **Data Creation Scripts** section below)
 
-- **tuto_radiomdl_doppler.py**: Enhanced Python script that extends `tuto_radiomdl.py` with Doppler effect analysis and compensation. It includes automatic risk assessment for satellite interference, radial velocity calculations, and physics-based Doppler correction in the frequency domain for more accurate satellite interference predictions
+- **`tuto_radiomdl_doppler.py`**: Enhanced Python script that extends `tuto_radiomdl.py` with Doppler effect analysis and compensation. It includes automatic risk assessment for satellite interference, radial velocity calculations, and physics-based Doppler correction in the frequency domain for more accurate satellite interference predictions
 
-- **tuto_radiomdl_transmitter.py**: Advanced radio astronomy observation modeling with enhanced physics including Doppler effect correction and realistic transmitter characteristics modeling, extending `tuto_radiomdl_doppler.py`
+- **`tuto_radiomdl_transmitter.py`**: Advanced radio astronomy observation modeling with enhanced physics including Doppler effect correction and realistic transmitter characteristics modeling, extending `tuto_radiomdl_doppler.py`
 
-- **tuto_radiomdl_environment.py**: Comprehensive environmental effects modeling for radio astronomy observations including terrain masking with DEM data, atmospheric refraction correction, water vapor effects, and limb refraction for space-to-space interactions, extending `tuto_radiomdl_transmitter.py`
+- **`tuto_radiomdl_environment.py`**: Comprehensive environmental effects modeling for radio astronomy observations including terrain masking with DEM data, atmospheric refraction correction, water vapor effects, and limb refraction for space-to-space interactions, extending `tuto_radiomdl_transmitter.py`
 
   - Note that the DEM data (GeoTIFF) is taken from USGS 1 meter DEMS: https://data.usgs.gov/datacatalog/data/USGS:77ae0551-c61e-4979-aedd-d797abdcde0e
 
-- ***tuto_radiomdl_250401.ipynb and .py***: Testing Jupyter notebook and python script with newly generated Arrow files from the data creation scripts for different time span (see **Data Creation Scripts** section below)
+- **`tuto_radiomdl_direct.py`**: Ability to analyze a single satellite interference (direct effects) versus ensemble satellite interference (aggregate effects) through command-line arguments, enabling focused analysis of specific satellites or comprehensive multi-satellite impact assessment, and extending `tuto_radiomdl_environment.py`. Example commands are:
+  ```
+  - for aggregate effects (no argument required)
+  python tuto_radiomdl_direct.py
+
+  - for direct effects with the STARLINK-5322 satellite
+  python tuto_radiomdl_direct.py --direct STARLINK-5322
+  ```
 
 - **Data directory**: `research_tutorials/data/` - Contains input data files
 
