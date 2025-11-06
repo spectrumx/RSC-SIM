@@ -1392,13 +1392,6 @@ def link_budget_doppler_transmitter(
         # This preserves both the Doppler frequency correction AND the enhanced power characteristics
         final_result = doppler_corrected_result * enhancement_factor
 
-        # DKDK
-        # # Log the combination for debugging
-        # print("🔄 Combined Doppler correction + Enhanced transmitter characteristics")
-        # print("   • Doppler correction: Applied relativistic physics")
-        # print("   • Enhanced characteristics: Polarization + harmonics")
-        # print("   • Combination method: Doppler result × Enhancement factor")
-
     else:
         # CASE: Only enhanced characteristics (no Doppler)
         # Use the enhanced result directly
@@ -1465,8 +1458,18 @@ def calculate_comprehensive_environmental_effects_vectorized(alt_deg, az_deg, rn
         atmospheric_loss = calculate_atmospheric_absorption(alt_deg, freq)
         factors['atmospheric_absorption_factor'] = atmospheric_loss
 
-        # VECTORIZED water vapor effects
-        water_vapor_loss = calculate_water_vapor_effects(alt_deg, freq)
+        # Simplified model
+        # # VECTORIZED water vapor effects
+        # water_vapor_loss = calculate_water_vapor_effects(alt_deg, freq)
+        # factors['water_vapor_factor'] = water_vapor_loss
+
+        # VECTORIZED water vapor effects - using Liebe model
+        water_vapor_absorption, water_vapor_emission = env_obj.calculate_water_vapor_effects(alt_deg, freq)
+        # Convert dB absorption to multiplicative factor (0-1)
+        water_vapor_loss = 10**(-water_vapor_absorption/10.0)
+        # Clamp to reasonable range
+        water_vapor_loss = max(0.1, min(1.0, water_vapor_loss))
+
         factors['water_vapor_factor'] = water_vapor_loss
 
         # Calculate total environmental factor

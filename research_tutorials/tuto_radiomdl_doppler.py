@@ -928,6 +928,10 @@ elevation_grid = np.arange(0, 91, 1)
 n_az = len(azimuth_grid)
 n_el = len(elevation_grid)
 
+# Use the existing constellation that already has the correct Doppler correction applied
+# starlink_constellation was already created with the appropriate use_doppler_correction decision
+print(f"Using existing constellation for sky map (Doppler correction: {use_doppler_correction})...")
+
 # Prepare output array for the case WITH satellites
 map_grid = np.zeros((n_el, n_az))
 
@@ -944,6 +948,7 @@ for i, el in enumerate(elevation_grid):
         })
         traj = Trajectory(point_df)
         obs = Observation.from_dates(time_plot, time_plot, traj, westford)
+        # Consider Doppler effect correction if necessary
         result = model_observed_temp(obs, sky_mdl, starlink_constellation)
         map_grid[i, j] = result[0, 0, 0]
 

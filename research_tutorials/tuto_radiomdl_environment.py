@@ -432,6 +432,46 @@ def lnk_bdgt(*args, **kwargs):
     return sat_link_budget_vectorized(*args, **kwargs)
 
 
+# Generalized function to add environmental effects to any link budget function
+def add_environmental_effects_to_link_budget(base_lnk_bdgt_func, environment, environmental_config):
+    """
+    Create a wrapper function that adds environmental effects to any base link budget function.
+
+    Args:
+        base_lnk_bdgt_func: The base link budget function to enhance
+        environment: Environmental effects object
+        environmental_config: Environmental configuration
+
+    Returns:
+        Enhanced link budget function with environmental effects
+    """
+    def enhanced_lnk_bdgt(*args, **kwargs):
+        # Use the base link budget function
+        kwargs['beam_avoid'] = 1e-20
+        kwargs['turn_off'] = False
+
+        # VECTORIZED ENVIRONMENTAL EFFECTS CALCULATION
+        if environmental_config is not None:
+            # Convert to degrees for environmental calculations
+            dec_sat, caz_sat, rng_sat, freq = args[3], args[4], args[5], args[7]
+            alt_deg = 90 - np.degrees(dec_sat)
+            az_deg = np.degrees(caz_sat)
+
+            # Calculate comprehensive environmental effects
+            env_factors = calculate_comprehensive_environmental_effects_vectorized(
+                alt_deg, az_deg, rng_sat, freq, environment
+            )
+
+            # Apply environmental effects to the base link budget
+            basic_result = base_lnk_bdgt_func(*args, **kwargs)
+            return basic_result * env_factors['total_factor']
+        else:
+            # No environmental effects, use base link budget
+            return base_lnk_bdgt_func(*args, **kwargs)
+
+    return enhanced_lnk_bdgt
+
+
 # satellites trajectories during the observation
 file_traj_sats_path = os.path.join(
     script_dir, "data",
@@ -794,8 +834,17 @@ else:
         )
     else:
         print("   + Standard transmitter characteristics (baseline)")
+
+        # Add environmental effects even when transmitter characteristics are disabled
+        lnk_bdgt_with_env = add_environmental_effects_to_link_budget(
+            lnk_bdgt,
+            environment,
+            environmental_config
+        )
+
+        # Create constellation with the new link budget function
         starlink_constellation = Constellation.from_file(
-            file_traj_sats_path, observ, sat_transmit, lnk_bdgt,
+            file_traj_sats_path, observ, sat_transmit, lnk_bdgt_with_env,
             name_tag='sat',
             time_tag='timestamp',
             elevation_tag='elevations',
@@ -971,9 +1020,16 @@ else:
             filt_funcs=(filt_name, filt_el)
         )
     else:
-        # No Doppler, no transmitter characteristics (low risk case)
+        # No Doppler, no transmitter characteristics (low risk case), but environmental effects
+        lnk_bdgt_beam_avoid_with_env = add_environmental_effects_to_link_budget(
+            lnk_bdgt_beam_avoid,
+            environment,
+            environmental_config
+        )
+
+        # Create constellation with the new link budget function
         starlink_const_beam_avoid = Constellation.from_file(
-            file_traj_sats_path, observ, sat_transmit, lnk_bdgt_beam_avoid,
+            file_traj_sats_path, observ, sat_transmit, lnk_bdgt_beam_avoid_with_env,
             name_tag='sat',
             time_tag='timestamp',
             elevation_tag='elevations',
@@ -1157,9 +1213,16 @@ else:
             filt_funcs=(filt_name, filt_el)
         )
     else:
-        # No Doppler, no transmitter characteristics (low risk case)
+        # No Doppler, no transmitter characteristics (low risk case), but environmental effects
+        lnk_bdgt_cst_gain_with_env = add_environmental_effects_to_link_budget(
+            lnk_bdgt,
+            environment,
+            environmental_config
+        )
+
+        # Create constellation with the new link budget function
         starlink_cst_gain_constellation = Constellation.from_file(
-            file_traj_sats_path, observ, sat_cst_gain_transmit, lnk_bdgt,
+            file_traj_sats_path, observ, sat_cst_gain_transmit, lnk_bdgt_cst_gain_with_env,
             name_tag='sat',
             time_tag='timestamp',
             elevation_tag='elevations',
@@ -1310,8 +1373,8 @@ ax.set_theta_zero_location("N")
 # It is possible to increase the number of frequency channels that the simulator
 # can compute to visualize the PSD:
 
-# new instrument parameters
-new_freq_chan = 164
+# Originally 164, but it takes too long to compute. So reduced it to 11.
+new_freq_chan = 11
 new_bw = 30e6
 
 # new instrument that simulate the PSD
@@ -1428,7 +1491,29 @@ else:
     # No Doppler correction but still apply transmitter characteristics if enabled
     if use_enhanced_transmitters:
         def lnk_bdgt_freqs_with_transmitter(*args, **kwargs):
-            """Frequency-dependent link budget function with transmitter characteristics only"""
+            """Frequency-dependent link budget function with transmitter characteristics and environmental effects"""
+            # set very small number for beam_avoid
+            kwargs['beam_avoid'] = 1e-20
+            kwargs['turn_off'] = False
+
+            # VECTORIZED ENVIRONMENTAL EFFECTS CALCULATION
+            if environmental_config is not None:
+                # Convert to degrees for environmental calculations
+                dec_sat, caz_sat, rng_sat, freq = args[3], args[4], args[5], args[7]
+                alt_deg = 90 - np.degrees(dec_sat)
+                az_deg = -np.degrees(caz_sat)
+
+                # Vectorized environmental factor calculation
+                env_factors = calculate_comprehensive_environmental_effects_vectorized(
+                    alt_deg, az_deg, rng_sat, freq, environment
+                )
+
+                # If satellite is completely blocked, return zero
+                if env_factors['total_factor'] == 0.0:
+                    return 0.0
+            else:
+                env_factors = {'total_factor': 1.0}
+
             temp_transmitter = Transmitter.from_instrument(
                 sat_transmit_freqs,
                 polarization='circular',  # Use realistic Starlink characteristics
@@ -1438,10 +1523,13 @@ else:
             # Properly handle arguments for comprehensive function
             if len(args) >= 8:  # Ensure we have enough arguments
                 new_args = list(args[:6]) + [args[7]] + [temp_transmitter]
-                return sat_link_budget_comprehensive_vectorized(*new_args, **kwargs)
+                result = sat_link_budget_comprehensive_vectorized(*new_args, **kwargs)
             else:
                 # Fallback to basic function if not enough arguments
-                return sat_link_budget_vectorized(*args, **kwargs)
+                result = sat_link_budget_vectorized(*args, **kwargs)
+
+            # Apply environmental factor
+            return result * env_factors['total_factor']
 
         starlink_constellation_freqs = Constellation.from_file(
             file_traj_sats_path, observ_freqs, sat_transmit_freqs, lnk_bdgt_freqs_with_transmitter,
@@ -1453,9 +1541,39 @@ else:
             filt_funcs=(filt_name, filt_el)
         )
     else:
-        # No Doppler, no transmitter characteristics (low risk case)
+        # No Doppler, no transmitter characteristics (low risk case) - but still include environmental effects
+        def lnk_bdgt_freqs_basic_with_env(*args, **kwargs):
+            """Basic frequency-dependent link budget function with environmental effects"""
+            # set very small number for beam_avoid
+            kwargs['beam_avoid'] = 1e-20
+            kwargs['turn_off'] = False
+
+            # VECTORIZED ENVIRONMENTAL EFFECTS CALCULATION
+            if environmental_config is not None:
+                # Convert to degrees for environmental calculations
+                dec_sat, caz_sat, rng_sat, freq = args[3], args[4], args[5], args[7]
+                alt_deg = 90 - np.degrees(dec_sat)
+                az_deg = -np.degrees(caz_sat)
+
+                # Vectorized environmental factor calculation
+                env_factors = calculate_comprehensive_environmental_effects_vectorized(
+                    alt_deg, az_deg, rng_sat, freq, environment
+                )
+
+                # If satellite is completely blocked, return zero
+                if env_factors['total_factor'] == 0.0:
+                    return 0.0
+            else:
+                env_factors = {'total_factor': 1.0}
+
+            # Basic link budget calculation
+            result = sat_link_budget_vectorized(*args, **kwargs)
+
+            # Apply environmental factor
+            return result * env_factors['total_factor']
+
         starlink_constellation_freqs = Constellation.from_file(
-            file_traj_sats_path, observ_freqs, sat_transmit_freqs, sat_link_budget_vectorized,
+            file_traj_sats_path, observ_freqs, sat_transmit_freqs, lnk_bdgt_freqs_basic_with_env,
             name_tag='sat',
             time_tag='timestamp',
             elevation_tag='elevations',
@@ -1466,13 +1584,11 @@ else:
 
 print("Starting result_freqs computation...")
 
-# For now, atmospheric refraction is not considered yet
-result_freqs = model_observed_temp(observ_freqs, sky_mdl, starlink_constellation_freqs)
-# # Use atmospheric refraction correction for frequency analysis
-# result_freqs, refraction_summary_freqs = model_observed_temp_with_atmospheric_refraction_vectorized(
-#     observ_freqs, sky_mdl, constellation=starlink_constellation_freqs, beam_avoidance=True,
-#     atmospheric_refraction=atmospheric_refraction_config
-# )
+# Consider atmospheric refraction
+result_freqs, refraction_summary_freqs = model_observed_temp_with_atmospheric_refraction_vectorized(
+    observ_freqs, sky_mdl, constellation=starlink_constellation_freqs, beam_avoidance=True,
+    atmospheric_refraction=atmospheric_refraction_config
+)
 
 # spectogram plot
 time_samples = observ_freqs.get_time_stamps()
@@ -1581,7 +1697,11 @@ for i, el in enumerate(elevation_grid):
         })
         traj = Trajectory(point_df)
         obs = Observation.from_dates(time_plot, time_plot, traj, westford)
-        sky_result = model_observed_temp(obs, sky_mdl, starlink_constellation)
+        # Enhanced sky mapping with environmental effects
+        sky_result, refraction_summary = model_observed_temp_with_atmospheric_refraction_vectorized(
+            obs, sky_mdl, constellation=starlink_constellation, beam_avoidance=True,
+            atmospheric_refraction=atmospheric_refraction_config
+        )
         map_grid[i, j] = sky_result[0, 0, 0]
 
 # Plotting for the case WITH satellites

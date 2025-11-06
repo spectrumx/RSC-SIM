@@ -1347,6 +1347,10 @@ elevation_grid = np.arange(0, 91, 1)
 n_az = len(azimuth_grid)
 n_el = len(elevation_grid)
 
+# Use the existing constellation that already has the correct Doppler correction
+# and transmitter characteristics applied based on use_doppler_correction and use_enhanced_transmitters
+print(f"Using existing constellation for sky map (Doppler: {use_doppler_correction}, Transmitter: {use_enhanced_transmitters})...")  # noqa: E501
+
 # Prepare output array for the case WITH satellites
 map_grid = np.zeros((n_el, n_az))
 
@@ -1361,7 +1365,12 @@ for i, el in enumerate(elevation_grid):
         })
         traj = Trajectory(point_df)
         obs = Observation.from_dates(time_plot, time_plot, traj, westford)
-        sky_result = model_observed_temp(obs, sky_mdl, starlink_constellation)
+        # Consider Doppler effect correction and transmitter characteristics if necessary
+        if use_enhanced_transmitters:
+            # Force beam_avoidance=True to use the enhanced link budget function instead of vectorized path
+            sky_result = model_observed_temp(obs, sky_mdl, starlink_constellation, beam_avoidance=True)
+        else:
+            sky_result = model_observed_temp(obs, sky_mdl, starlink_constellation)
         map_grid[i, j] = sky_result[0, 0, 0]
 
 # Plotting for the case WITH satellites
