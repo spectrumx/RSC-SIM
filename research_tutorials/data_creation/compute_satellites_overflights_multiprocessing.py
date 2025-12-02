@@ -11,9 +11,6 @@ import pyproj
 from skyfield.api import load, wgs84, EarthSatellite
 from pathlib import Path
 from urllib.request import urlopen
-############ Added to fix SSL certificate verification error ############
-import ssl
-###########################################################################
 from sgp4 import omm
 from sgp4.api import Satrec
 from datetime import timedelta
@@ -21,11 +18,10 @@ import pandas as pd
 import time
 import numpy as np
 import multiprocessing as mp
-from multiprocessing import Pool, Manager
-import os
-from functools import partial
+from multiprocessing import Pool
 import psutil
 import threading
+import ssl
 
 
 def safe_time_str(dt):
@@ -70,8 +66,14 @@ def print_cpu_status(cpu_stats, prefix=""):
         cpu_stats: Dictionary from get_cpu_usage()
         prefix: Optional prefix string for the output
     """
-    print(f"{prefix}CPU Usage: {cpu_stats['cpu_percent']:.1f}% (Physical cores: {cpu_stats['cpu_count_physical']}, Logical cores: {cpu_stats['cpu_count']})")
-    print(f"{prefix}Memory Usage: {cpu_stats['memory_percent']:.1f}% ({cpu_stats['memory_available_gb']:.2f} GB available / {cpu_stats['memory_total_gb']:.2f} GB total)")
+    cpu_msg = (f"{prefix}CPU Usage: {cpu_stats['cpu_percent']:.1f}% "
+               f"(Physical cores: {cpu_stats['cpu_count_physical']}, "
+               f"Logical cores: {cpu_stats['cpu_count']})")
+    print(cpu_msg)
+    mem_msg = (f"{prefix}Memory Usage: {cpu_stats['memory_percent']:.1f}% "
+               f"({cpu_stats['memory_available_gb']:.2f} GB available / "
+               f"{cpu_stats['memory_total_gb']:.2f} GB total)")
+    print(mem_msg)
     if len(cpu_stats['cpu_per_core']) <= 16:  # Only print per-core if <= 16 cores
         per_core_str = ", ".join([f"{c:.1f}%" for c in cpu_stats['cpu_per_core']])
         print(f"{prefix}Per-core CPU: [{per_core_str}]")
@@ -88,7 +90,8 @@ def monitor_cpu_background(monitor_interval=5.0, stop_event=None):
     if stop_event is None:
         stop_event = threading.Event()
     
-    print(f"[CPU Monitor] Starting background CPU monitoring (interval: {monitor_interval}s)")
+    print(f"[CPU Monitor] Starting background CPU monitoring "
+          f"(interval: {monitor_interval}s)")
     
     while not stop_event.is_set():
         cpu_stats = get_cpu_usage(interval=0.1)
@@ -99,7 +102,7 @@ def monitor_cpu_background(monitor_interval=5.0, stop_event=None):
         # Wait for next check or stop signal
         stop_event.wait(monitor_interval)
     
-    print(f"[CPU Monitor] Stopping background CPU monitoring")
+    print("[CPU Monitor] Stopping background CPU monitoring")
 
 
 def calculate_dynamic_batches(total_sats, cpu_stats, min_workers=2, max_workers=None):
@@ -184,10 +187,12 @@ def validate_trajectory_data(elevations, azimuths, distances):
     return elev_array, azim_array, dist_array
 
 
-def process_satellite_batch(satellite_data_batch, observer_lat, observer_lon, observer_alt, 
-                           t0_year, t0_month, t0_day, t0_hour, t0_minute, t0_second,
-                           t1_year, t1_month, t1_day, t1_hour, t1_minute, t1_second,
-                           time_step_ms, time_round, fmt, worker_id):
+def process_satellite_batch(
+        satellite_data_batch, observer_lat, observer_lon, observer_alt,
+        t0_year, t0_month, t0_day, t0_hour, t0_minute, t0_second,
+        t1_year, t1_month, t1_day, t1_hour, t1_minute, t1_second,
+        time_step_ms, time_round, fmt, worker_id
+):
     """
     Process a batch of satellites and return trajectory data.
     
@@ -206,7 +211,8 @@ def process_satellite_batch(satellite_data_batch, observer_lat, observer_lon, ob
     Returns:
         tuple: (worker_id, trajectory_data_dict)
     """
-    print(f"Worker {worker_id}: Starting processing of {len(satellite_data_batch)} satellites")
+    print(f"Worker {worker_id}: Starting processing of "
+          f"{len(satellite_data_batch)} satellites")
     
     # Recreate Skyfield objects in this process
     ts = load.timescale()
@@ -227,7 +233,9 @@ def process_satellite_batch(satellite_data_batch, observer_lat, observer_lon, ob
             e.name = sat_data.get('OBJECT_NAME')
             satellites.append(e)
         except Exception as e:
-            print(f"Worker {worker_id}: Error creating satellite {sat_data.get('OBJECT_NAME', 'Unknown')}: {e}")
+            sat_name = sat_data.get('OBJECT_NAME', 'Unknown')
+            print(f"Worker {worker_id}: Error creating satellite "
+                  f"{sat_name}: {e}")
             continue
     
     # Pre-allocate lists to collect all data for this batch
@@ -242,7 +250,8 @@ def process_satellite_batch(satellite_data_batch, observer_lat, observer_lon, ob
     for sat_idx, sat in enumerate(satellites):
         # Progress tracking for this worker
         if sat_idx % 100 == 0 or sat_idx == len(satellites) - 1:
-            print(f"Worker {worker_id}: Processing satellite {sat_idx + 1}/{len(satellites)}: {sat.name}")
+            print(f"Worker {worker_id}: Processing satellite "
+                  f"{sat_idx + 1}/{len(satellites)}: {sat.name}")
         
         try:
             # Distance from satellite to observer over time
@@ -308,7 +317,8 @@ def process_satellite_batch(satellite_data_batch, observer_lat, observer_lon, ob
             continue
     
     batch_time = time.time() - batch_start_time
-    print(f"Worker {worker_id}: Completed processing {len(satellites)} satellites in {batch_time:.2f} seconds")
+    print(f"Worker {worker_id}: Completed processing "
+          f"{len(satellites)} satellites in {batch_time:.2f} seconds")
     
     # Return trajectory data for this batch
     trajectory_data = {
@@ -322,7 +332,10 @@ def process_satellite_batch(satellite_data_batch, observer_lat, observer_lon, ob
     return worker_id, trajectory_data
 
 
-def compute_satellite_trajectories_multiprocessing(satellites, tle_data_list, observer, t0, t1, time_step, time_round, fmt, num_workers=None, min_workers=2, max_workers=None):
+def compute_satellite_trajectories_multiprocessing(
+        satellites, tle_data_list, observer, t0, t1, time_step, time_round,
+        fmt, num_workers=None, min_workers=2, max_workers=None
+):
     """
     Compute trajectories using multiprocessing with dynamic batch distribution based on CPU usage.
     
@@ -340,7 +353,9 @@ def compute_satellite_trajectories_multiprocessing(satellites, tle_data_list, ob
         max_workers (int): Maximum number of workers to use (None = use all logical cores)
         
     Returns:
-        tuple: (pandas.DataFrame, int) - DataFrame with columns ['timestamp', 'sat', 'elevations', 'azimuths', 'ranges_westford'] and number of workers used
+        tuple: (pandas.DataFrame, int) - DataFrame with columns
+            ['timestamp', 'sat', 'elevations', 'azimuths', 'ranges_westford']
+            and number of workers used
     """
     total_sats = len(satellites)
     
@@ -358,18 +373,20 @@ def compute_satellite_trajectories_multiprocessing(satellites, tle_data_list, ob
         print("DYNAMIC BATCH DISTRIBUTION")
         print("="*60)
         print(f"Total satellites to process: {total_sats}")
-        print(f"Calculating optimal batch distribution based on CPU usage...")
+        print("Calculating optimal batch distribution based on CPU usage...")
         
         optimal_workers, batch_sizes = calculate_dynamic_batches(
             total_sats, initial_cpu_stats, min_workers=min_workers, max_workers=max_workers
         )
         num_workers = optimal_workers
         
-        print(f"\nBatch Decision:")
+        print("\nBatch Decision:")
         print(f"  - CPU Usage: {initial_cpu_stats['cpu_percent']:.1f}%")
         print(f"  - Optimal Workers: {num_workers}")
         print(f"  - Batch Sizes: {batch_sizes}")
-        print(f"  - Total satellites per batch: {sum(batch_sizes)} (should equal {total_sats})")
+        total_batch = sum(batch_sizes)
+        print(f"  - Total satellites per batch: {total_batch} "
+              f"(should equal {total_sats})")
     else:
         # Use fixed number of workers, but still calculate batch sizes
         print(f"\nUsing fixed number of workers: {num_workers}")
@@ -387,7 +404,8 @@ def compute_satellite_trajectories_multiprocessing(satellites, tle_data_list, ob
         
         print(f"  - Batch Sizes: {batch_sizes}")
     
-    print(f"\nStarting multiprocessing computation with {num_workers} workers")
+    print(f"\nStarting multiprocessing computation with "
+          f"{num_workers} workers")
     
     # Extract serializable data from Skyfield objects
     observer_lat = observer.latitude.degrees
@@ -417,7 +435,8 @@ def compute_satellite_trajectories_multiprocessing(satellites, tle_data_list, ob
         batch_data = tle_data_list[start_idx:end_idx]
         satellite_data_batches.append(batch_data)
         
-        print(f"Worker {i}: Assigned {len(batch_data)} satellites (indices {start_idx}-{end_idx-1})")
+        print(f"Worker {i}: Assigned {len(batch_data)} satellites "
+              f"(indices {start_idx}-{end_idx-1})")
         current_idx = end_idx
     
     # Start multiprocessing computation
@@ -440,12 +459,14 @@ def compute_satellite_trajectories_multiprocessing(satellites, tle_data_list, ob
     try:
         with Pool(processes=num_workers) as pool:
             # Map the batches to worker processes
-            results = pool.starmap(process_satellite_batch, 
-                                 [(batch_data, observer_lat, observer_lon, observer_alt,
-                                   t0_year, t0_month, t0_day, t0_hour, t0_minute, t0_second,
-                                   t1_year, t1_month, t1_day, t1_hour, t1_minute, t1_second,
-                                   time_step_ms, time_round, fmt, i) 
-                                  for i, batch_data in enumerate(satellite_data_batches)])
+            batch_args = [
+                (batch_data, observer_lat, observer_lon, observer_alt,
+                 t0_year, t0_month, t0_day, t0_hour, t0_minute, t0_second,
+                 t1_year, t1_month, t1_day, t1_hour, t1_minute, t1_second,
+                 time_step_ms, time_round, fmt, i)
+                for i, batch_data in enumerate(satellite_data_batches)
+            ]
+            results = pool.starmap(process_satellite_batch, batch_args)
     finally:
         # Stop background monitoring
         stop_monitoring.set()
@@ -459,7 +480,8 @@ def compute_satellite_trajectories_multiprocessing(satellites, tle_data_list, ob
     print_cpu_status(final_cpu_stats)
     
     multiprocessing_time = time.time() - start_time
-    print(f"\nMultiprocessing computation completed in {multiprocessing_time:.2f} seconds")
+    print(f"\nMultiprocessing computation completed in "
+          f"{multiprocessing_time:.2f} seconds")
     
     # Combine results from all workers
     print("Combining results from all workers...")
@@ -480,13 +502,16 @@ def compute_satellite_trajectories_multiprocessing(satellites, tle_data_list, ob
         all_elevations.extend(trajectory_data['elevations'])
         all_azimuths.extend(trajectory_data['azimuths'])
         all_distances.extend(trajectory_data['distances'])
-        print(f"Worker {worker_id}: Added {len(trajectory_data['timestamps'])} trajectory points")
+        n_points = len(trajectory_data['timestamps'])
+        print(f"Worker {worker_id}: Added {n_points} trajectory points")
     
     combine_time = time.time() - combine_start_time
-    print(f"Result combination completed in {combine_time:.2f} seconds")
+    print(f"Result combination completed in "
+          f"{combine_time:.2f} seconds")
     
     # Create final DataFrame
-    print(f"Creating final DataFrame with {len(all_timestamps)} trajectory points...")
+    n_traj_points = len(all_timestamps)
+    print(f"Creating final DataFrame with {n_traj_points} trajectory points...")
     df = pd.DataFrame({
         'timestamp': all_timestamps,
         'sat': all_sat_names,
@@ -496,7 +521,8 @@ def compute_satellite_trajectories_multiprocessing(satellites, tle_data_list, ob
     })
     
     total_time = time.time() - start_time
-    print(f"Total multiprocessing time: {total_time:.2f} seconds")
+    print(f"Total multiprocessing time: "
+          f"{total_time:.2f} seconds")
     
     return df, num_workers
 
@@ -521,16 +547,13 @@ def load_satellites_from_url(url, satellite_type, output_dir="traj_files"):
     filepath = Path(output_dir) / filename
 
     try:
-        #data = urlopen(url) # Original line
-        ############# Added to fix SSL certificate verification error ############
         # Create an SSL context that doesn't verify certificates
         # This is safe for downloading public data from Celestrak
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-        
+
         data = urlopen(url, context=ssl_context)
-        ###########################################################################
         filepath.write_bytes(data.read())
         print(f"Downloaded {satellite_type} data to {filepath}")
     except Exception as e:
@@ -693,9 +716,11 @@ def main():
     max_workers = None  # Maximum number of workers (None = use all logical cores)
     
     if num_workers is None:
-        print(f"\nUsing dynamic batch distribution based on CPU usage")
+        print("\nUsing dynamic batch distribution based on CPU usage")
         print(f"  - Min workers: {min_workers}")
-        print(f"  - Max workers: {max_workers if max_workers else 'all logical cores'}")
+        max_workers_str = (max_workers if max_workers
+                          else 'all logical cores')
+        print(f"  - Max workers: {max_workers_str}")
     else:
         print(f"\nUsing fixed number of worker processes: {num_workers}")
 
@@ -746,7 +771,8 @@ def main():
     print(f"Total trajectory points: {len(trajectory_df)}")
     print(f"Unique satellites: {trajectory_df['sat'].nunique()}")
     if num_workers is None:
-        print(f"Number of workers used: {workers_used} (dynamically determined based on CPU usage)")
+        print(f"Number of workers used: {workers_used} "
+              "(dynamically determined based on CPU usage)")
     else:
         print(f"Number of workers used: {workers_used} (fixed)")
 
@@ -761,14 +787,18 @@ def main():
             print(f"  - {sat_type}: {len(type_sats)} satellites with trajectories")
 
     # Elevation statistics
-    print(f"\nElevation range: {trajectory_df['elevations'].min():.1f}° to "
-          f"{trajectory_df['elevations'].max():.1f}°")
-    print(f"Mean elevation: {trajectory_df['elevations'].mean():.1f}°")
+    elev_min = trajectory_df['elevations'].min()
+    elev_max = trajectory_df['elevations'].max()
+    elev_mean = trajectory_df['elevations'].mean()
+    print(f"\nElevation range: {elev_min:.1f}° to {elev_max:.1f}°")
+    print(f"Mean elevation: {elev_mean:.1f}°")
 
     # Distance statistics
-    print(f"\nDistance range: {trajectory_df['ranges_westford'].min()/1000:.1f} km to "
-          f"{trajectory_df['ranges_westford'].max()/1000:.1f} km")
-    print(f"Mean distance: {trajectory_df['ranges_westford'].mean()/1000:.1f} km")
+    dist_min = trajectory_df['ranges_westford'].min() / 1000
+    dist_max = trajectory_df['ranges_westford'].max() / 1000
+    dist_mean = trajectory_df['ranges_westford'].mean() / 1000
+    print(f"\nDistance range: {dist_min:.1f} km to {dist_max:.1f} km")
+    print(f"Mean distance: {dist_mean:.1f} km")
 
     # =============================================================================
     # EXECUTION TIME SUMMARY
