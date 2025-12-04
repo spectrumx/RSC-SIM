@@ -22,6 +22,7 @@ This software grew and evolved out of the RadioMdl codebase, a Julia package cre
 - `radio_types.py`: Radio data types
 - `sat_mdl.py`: Satellite modeling
 - `env_mdl.py`: Environment effects modeling
+- `weather_sat_mdl.py`: Weather satellite RFI modeling
 
 ## Tutorial Resources
 
@@ -31,7 +32,11 @@ This directory contains a series of focused, educational tutorials for learning 
 
 ### `research_tutorials/` directory
 
-This contains additional learning resources and examples and serves as a reference implementation for the modeling and simulation of radio astronomy observations. It consists of Jupyter Notebooks and their CLI scripts, and also includes data creation scripts for trajectory files of a star and satellite at the `research_tutorials/data_creation/` directory. Details can be found at the `README.md` inside the `research_tutorials/` directory.
+This contains additional learning resources and examples and serves as a reference implementation for the modeling and simulation of radio astronomy observations. It consists of Jupyter Notebooks and their CLI scripts, and also includes data creation scripts for trajectory files of a star and satellite at the `research_tutorials/data_creation/` directory.
+
+This also has a weather satellite RFI modeling tutorial for SUOMI-NPP (`tuto_radiomdl_weather_phase1.py`) for simulating interference from Starlink satellite backlobe and sidelobe emissions to weather satellites in a "looking-down" observation scenario (Phase 1).
+
+Details can be found at the `README.md` inside the `research_tutorials/` directory.
 
 ## Installation
 
