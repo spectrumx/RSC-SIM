@@ -24,6 +24,15 @@ The Python implementation is organized as follows:
   python tuto_radiomdl_direct.py --direct STARLINK-5322
   ```
 
+- **`tuto_radiomdl_weather_phase1.py`**: Phase 1 weather satellite RFI modeling tutorial for simulating interference from Starlink satellite backlobe and sidelobe emissions to weather satellites (e.g., Suomi-NPP) in a "looking-down" observation scenario. This tutorial demonstrates:
+  - Coordinate transformations to weather satellite body frame (nadir, along-track, cross-track)
+  - Suomi-NPP Weather satellite antenna pattern loading from CSV files (K-Band 23.8 GHz and V-Band 50.3 GHz)
+  - Starlink backlobe/sidelobe interference modeling using ITU antenna patterns
+  - Link budget calculations for space-to-space interference paths
+  - Harmonic effects from Starlink fundamental frequency affecting observation bands
+  - Earth brightness temperature and sky background modeling
+  - See `tuto_radiomdl_weather_phase1_input_parameters.md` for detailed parameter documentation
+
 - **Data directory**: `research_tutorials/data/` - Contains input data files
 
 - **Data creation directory**: `research_tutorials/data_creation/` - Contains scripts to generate input data files, .arrow, which are for getting trajectories of a star and a satellite with user-specified date and time. Currently, Cas A (Cassiopeia A) and Starlink satellite are used
@@ -33,8 +42,16 @@ The Python implementation is organized as follows:
 
 The `research_tutorials/data/` directory contains input data files of simulations including:
 - One **.cut** file: Gain pattern of the MIT Westford antenna generated from TRICA software
-- Two **.arrow** files: Trajectory files for astronomical objects (e.g., Cas A) and satellites (e.g., Starlink)
+- **.arrow** files: Trajectory files for astronomical objects (e.g., Cas A) and satellites (e.g., Starlink)
+  - **Phase 1 Weather Satellite RFI Modeling**:
+    - `Starlink_trajectory_Westford_2025-11-01T07_45_00.000_2025-11-01T08_45_00.000.arrow`: Starlink constellation trajectory for weather satellite RFI analysis
+    - `jpss_trajectory_Westford_2025-11-01T07_45_00.000_2025-11-01T08_45_00.000.arrow`: JPSS (Suomi-NPP) weather satellite trajectory
+- **CSV files** (Phase 1 Weather Satellite RFI Modeling):
+  - `K-Band 23.8 GHz absolute antenna pattern.csv`: Suomi-NPP ATMS K-Band antenna gain pattern (elevation angle vs. power in dB)
+  - `V-Band 50.3 GHz absolute antenna pattern.csv`: Suomi-NPP ATMS V-Band antenna gain pattern (elevation angle vs. power in dB)
 - One **.tif** file: DEM (Digital Elevation Model) GeoTIFF file for terrain analysis and environmental effects modeling: area around MIT Westford antenna (USGS_OPR_MA_CentralEastern_2021_B21_be_19TBH294720.tif)
+- **Markdown documentation**:
+  - `tuto_radiomdl_weather_phase1_input_parameters.md`: Comprehensive documentation of input parameters for Phase 1 weather satellite RFI modeling, including trajectory file generation instructions
 
 
 ### Data Creation Scripts
@@ -53,3 +70,8 @@ The `research_tutorials/data_creation/traj_files` directory contains two input f
 The Python implementation can be used through:
 - Direct Python scripts in CLI (e.g., `tuto_radiomdl.py`)
 - Jupyter notebooks (e.g., `tuto_radiomdl.ipynb`)
+
+**Phase 1 Weather Satellite RFI Modeling:**
+- Run the tutorial script: `python tuto_radiomdl_weather_phase1.py`
+- Refer to `tuto_radiomdl_weather_phase1_input_parameters.md` for detailed parameter descriptions and configuration options
+- Generate custom trajectory files using scripts in `data_creation/` directory (see parameter documentation for details)
