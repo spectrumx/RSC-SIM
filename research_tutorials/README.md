@@ -33,6 +33,20 @@ The Python implementation is organized as follows:
   - Earth brightness temperature and sky background modeling
   - See `tuto_radiomdl_weather_phase1_input_parameters.md` for detailed parameter documentation
 
+- **`tuto_radiomdl_weather_phase2.py`**: Phase 2 weather satellite RFI modeling tutorial that extends Phase 1 with ground-based 5G emitter interference modeling. This comprehensive tutorial includes:
+  - All Phase 1 capabilities (Starlink backlobe interference, weather satellite modeling)
+  - 5G ground emitter distribution modeling with configurable density (emitters/km²)
+  - Two deployment scenarios:
+    - **Suburban (Mid-Band)**: 3.5 GHz (n78 band) with 7th/14th harmonics affecting K/V-bands
+    - **Urban (High-Band/mmWave)**: 25.15 GHz (n258 band) with 2nd harmonic affecting V-band
+  - 5G sector antenna pattern modeling (configurable gain, beamwidth)
+  - Ground emitter link budget with atmospheric absorption losses
+  - Terrain masking and horizon visibility checks using DEM data
+  - Out-of-band emission (OOBE) modeling for frequencies near observation bands
+  - Harmonic interference analysis for both Starlink and ground emitters
+  - Polarization mismatch loss modeling (Starlink circular vs. Suomi-NPP linear)
+  - Comprehensive visualization: antenna patterns, emitter distribution, satellite positions, RFI power components
+
 - **Data directory**: `research_tutorials/data/` - Contains input data files
 
 - **Data creation directory**: `research_tutorials/data_creation/` - Contains scripts to generate input data files, .arrow, which are for getting trajectories of a star and a satellite with user-specified date and time. Currently, Cas A (Cassiopeia A) and Starlink satellite are used
@@ -75,3 +89,9 @@ The Python implementation can be used through:
 - Run the tutorial script: `python tuto_radiomdl_weather_phase1.py`
 - Refer to `tuto_radiomdl_weather_phase1_input_parameters.md` for detailed parameter descriptions and configuration options
 - Generate custom trajectory files using scripts in `data_creation/` directory (see parameter documentation for details)
+
+**Phase 2 Weather Satellite RFI Modeling (with Ground Emitters):**
+- Run the tutorial script: `python tuto_radiomdl_weather_phase2.py`
+- Extends Phase 1 with 5G ground emitter interference modeling
+- Configure deployment scenario by uncommenting/commenting Scenario A (Suburban) or Scenario B (Urban) in the script
+- Outputs include: antenna pattern plots, ground emitter distribution map, satellite positions, and RFI power breakdown by component
