@@ -46,6 +46,20 @@ The Python implementation is organized as follows:
   - Harmonic interference analysis for both Starlink and ground emitters
   - Polarization mismatch loss modeling (Starlink circular vs. Suomi-NPP linear)
   - Comprehensive visualization: antenna patterns, emitter distribution, satellite positions, RFI power components
+  - See `tuto_radiomdl_weather_phase2_input_parameters.md` for detailed parameter documentation
+
+- **`tuto_radiomdl_weather_phase3.py`**: Phase 3 weather satellite RFI modeling tutorial that extends Phase 2 with enhanced atmospheric effects modeling. This advanced tutorial includes:
+  - All Phase 1 and Phase 2 capabilities (Starlink backlobe, ground emitter interference)
+  - Comprehensive atmospheric absorption modeling using full ITU-R P.676 standard:
+    - Separate oxygen and water vapor absorption components
+    - Temperature, pressure, and humidity-dependent calculations
+    - Frequency-dependent attenuation (especially important for V-band at 50.3 GHz)
+  - Atmospheric refraction effects (optional, configurable)
+  - Ground reflection modeling with configurable surface properties
+  - Enhanced link budget calculations with path-integrated atmospheric losses
+  - Detailed atmospheric attenuation breakdown visualization
+  - Cached atmospheric calculator for improved computational performance
+  - See `tuto_radiomdl_weather_phase3_input_parameters.md` for detailed parameter documentation
 
 - **Data directory**: `research_tutorials/data/` - Contains input data files
 
@@ -66,6 +80,8 @@ The `research_tutorials/data/` directory contains input data files of simulation
 - One **.tif** file: DEM (Digital Elevation Model) GeoTIFF file for terrain analysis and environmental effects modeling: area around MIT Westford antenna (USGS_OPR_MA_CentralEastern_2021_B21_be_19TBH294720.tif)
 - **Markdown documentation**:
   - `tuto_radiomdl_weather_phase1_input_parameters.md`: Comprehensive documentation of input parameters for Phase 1 weather satellite RFI modeling, including trajectory file generation instructions
+  - `tuto_radiomdl_weather_phase2_input_parameters.md`: Comprehensive documentation of input parameters for Phase 2 weather satellite RFI modeling, including ground emitter configuration
+  - `tuto_radiomdl_weather_phase3_input_parameters.md`: Comprehensive documentation of input parameters for Phase 3 weather satellite RFI modeling, including enhanced atmospheric modeling (ITU-R P.676) and ground reflection effects
 
 
 ### Data Creation Scripts
@@ -95,3 +111,12 @@ The Python implementation can be used through:
 - Extends Phase 1 with 5G ground emitter interference modeling
 - Configure deployment scenario by uncommenting/commenting Scenario A (Suburban) or Scenario B (Urban) in the script
 - Outputs include: antenna pattern plots, ground emitter distribution map, satellite positions, and RFI power breakdown by component
+- Refer to `tuto_radiomdl_weather_phase2_input_parameters.md` for detailed parameter descriptions
+
+**Phase 3 Weather Satellite RFI Modeling (with Enhanced Atmospheric Effects):**
+- Run the tutorial script: `python tuto_radiomdl_weather_phase3.py`
+- Extends Phase 2 with comprehensive atmospheric modeling using ITU-R P.676 standard
+- Configure atmospheric conditions (temperature, pressure, humidity) for location-specific analysis
+- Features include: oxygen/water vapor absorption, atmospheric refraction, ground reflection modeling
+- Outputs include: all Phase 2 outputs plus atmospheric attenuation breakdown plots
+- Refer to `tuto_radiomdl_weather_phase3_input_parameters.md` for detailed parameter descriptions
