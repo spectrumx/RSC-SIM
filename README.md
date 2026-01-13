@@ -1,10 +1,10 @@
 # RSC-SIM
 
-Radio Science Coexistence Simulator RSC-SIM is a sophisticated Python framework designed for modeling radio astronomy observations, with particular emphasis on simulating the impact of satellite constellations (such as Starlink) on radio telescope observations. The framework provides end-to-end simulation capabilities from trajectory generation to power spectral density analysis, enabling researchers and astronomers to assess and mitigate interference from satellite mega-constellations.
-
-<br />
+Radio Science Coexistence Simulator RSC-SIM is a sophisticated Python framework designed for **modeling radio astronomy observations**, with particular emphasis on simulating the impact of satellite constellations (such as Starlink) on radio telescope observations. The framework provides end-to-end simulation capabilities from trajectory generation to power spectral density analysis, enabling researchers and astronomers to assess and mitigate interference from satellite mega-constellations.
 
 This software grew and evolved out of the RadioMdl codebase, a Julia package created by Dr. Samuel Thé (https://github.com/SJJThe). Modified version of the Julia codes are found at `Julia/` directory.
+
+In addition, RSC-SIM supports **weather satellite RFI modeling** from Starlink satellite back/side lobes and 5G ground emitters/networks to a weather satellite in a "looking-down" observation scenario, which includes environment effects such as atmospheric attenuation/absorption by oxygen, water vapor modeling, atmospheric refraction, terrain masking, and ground reflections for Starlink main lobe emissions.
 
 ## Requirements
 
@@ -23,6 +23,7 @@ This software grew and evolved out of the RadioMdl codebase, a Julia package cre
 - `sat_mdl.py`: Satellite modeling
 - `env_mdl.py`: Environment effects modeling
 - `weather_sat_mdl.py`: Weather satellite RFI modeling
+- `attenuation_mdl.py`: Atmospheric absorption/attenuation modeling
 
 ## Tutorial Resources
 
@@ -34,7 +35,7 @@ This directory contains a series of focused, educational tutorials for learning 
 
 This contains additional learning resources and examples and serves as a reference implementation for the modeling and simulation of radio astronomy observations. It consists of Jupyter Notebooks and their CLI scripts, and also includes data creation scripts for trajectory files of a star and satellite at the `research_tutorials/data_creation/` directory.
 
-This also has a weather satellite RFI modeling tutorial for SUOMI-NPP (`tuto_radiomdl_weather_phase1.py`) for simulating interference from Starlink satellite backlobe and sidelobe emissions to weather satellites in a "looking-down" observation scenario (Phase 1).
+This directory also has weather satellite RFI modeling tutorials (`tuto_radiomdl_weather_phase1.py, _phase2.py, and _phase3.py`) for a "looking-down" observation scenario (Phase 1, 2, and 3).
 
 Details can be found at the `README.md` inside the `research_tutorials/` directory.
 

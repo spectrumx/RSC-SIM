@@ -18,6 +18,14 @@ from radio_types import Antenna, Instrument, Trajectory, Constellation
 from astro_mdl import power_to_temperature, temperature_to_power
 from sat_mdl import free_space_loss, simple_link_budget
 
+# Import ITU-R P.676 calculator for full atmospheric modeling
+try:
+    from attenuation_mdl import get_cached_calculator, ITUP676Calculator
+    ITU_P676_AVAILABLE = True
+except ImportError:
+    ITU_P676_AVAILABLE = False
+    print("Warning: attenuation_mdl not available. Using simplified atmospheric model.")
+
 # Try to import rasterio for DEM support
 try:
     import rasterio
@@ -2829,6 +2837,1949 @@ def model_weather_sat_observed_power_phase2(
     return {
         'total': result_power_dbw,
         'starlink': result_starlink_dbw,
+        'ground_emitter': result_ground_emitter_dbw,
+        'earth': result_earth_dbw,
+        'sky': result_sky_dbw,
+        'system': result_system_dbw
+    }
+
+
+# =============================================================================
+# Phase 3: Enhanced Atmospheric Effects
+# =============================================================================
+
+def calculate_oxygen_absorption(
+    freq: float,
+    temperature: float = 288.15,
+    pressure: float = 101325.0,
+    elevation_angle: float = None
+) -> float:
+    """
+    Calculate oxygen absorption coefficient based on ITU-R P.676.
+
+    Oxygen absorption is significant at 50-60 GHz (oxygen resonance line).
+
+    Args:
+        freq: Frequency in Hz
+        temperature: Temperature in Kelvin (default: 288.15 K = 15°C)
+        pressure: Pressure in Pa (default: 101325 Pa = 1 atm)
+        elevation_angle: Elevation angle from ground (degrees, optional)
+
+    Returns:
+        float: Oxygen absorption coefficient in dB/km
+    """
+    freq_ghz = freq / 1e9
+
+    # ITU-R P.676 simplified model for oxygen absorption
+    # Strong absorption near 60 GHz oxygen resonance line
+    oxygen_band_center = 60.0  # GHz
+    distance_from_peak = abs(freq_ghz - oxygen_band_center)
+
+    if freq_ghz < 50:
+        # Below 50 GHz: moderate oxygen absorption
+        # Increases as we approach 60 GHz
+        if freq_ghz < 40:
+            # Below 40 GHz: minimal oxygen absorption
+            alpha_o2 = 0.01 * (freq_ghz / 40.0) ** 2
+        else:
+            # 40-50 GHz: increasing oxygen absorption
+            alpha_o2 = 0.1 + 1.9 * ((freq_ghz - 40) / 10.0)
+    elif freq_ghz < 70:
+        # Near oxygen line (50-70 GHz): very strong absorption
+        if distance_from_peak < 5:
+            # Very close to 60 GHz: extremely high absorption
+            alpha_o2 = 15.0 - 12.0 * (distance_from_peak / 5.0)
+        elif distance_from_peak < 10:
+            # Close to 60 GHz: high absorption
+            alpha_o2 = 3.0 - 2.0 * ((distance_from_peak - 5) / 5.0)
+        else:
+            # Far from peak but still in band: moderate absorption
+            alpha_o2 = 1.0 + 0.5 * ((freq_ghz - 50) / 20.0)
+    else:
+        # Above 70 GHz: decreasing but still significant
+        alpha_o2 = 1.5 - 0.5 * ((freq_ghz - 70) / 30.0)
+        alpha_o2 = max(0.5, alpha_o2)
+
+    # Pressure and temperature scaling (simplified)
+    # Higher pressure -> more absorption, higher temperature -> less absorption
+    pressure_factor = pressure / 101325.0
+    temperature_factor = (288.15 / temperature) ** 0.5
+    alpha_o2 *= pressure_factor * temperature_factor
+
+    return max(0.001, alpha_o2)  # Minimum 0.001 dB/km
+
+
+def calculate_water_vapor_absorption(
+    freq: float,
+    humidity: float = 50.0,
+    temperature: float = 288.15,
+    pressure: float = 101325.0,
+    elevation_angle: float = None
+) -> float:
+    """
+    Calculate water vapor absorption coefficient based on ITU-R P.676.
+
+    Water vapor absorption is significant at 22.235 GHz (water vapor line)
+    and increases with frequency.
+
+    Args:
+        freq: Frequency in Hz
+        humidity: Relative humidity in % (default: 50%)
+        temperature: Temperature in Kelvin (default: 288.15 K = 15°C)
+        pressure: Pressure in Pa (default: 101325 Pa = 1 atm)
+        elevation_angle: Elevation angle from ground (degrees, optional)
+
+    Returns:
+        float: Water vapor absorption coefficient in dB/km
+    """
+    freq_ghz = freq / 1e9
+
+    # ITU-R P.676 simplified model for water vapor absorption
+    # Strong absorption near 22.235 GHz water vapor line
+    water_vapor_line = 22.235  # GHz
+    distance_from_line = abs(freq_ghz - water_vapor_line)
+
+    if freq_ghz < 15:
+        # Below 15 GHz: minimal water vapor absorption
+        alpha_wv = 0.01 * (freq_ghz / 15.0) ** 2
+    elif freq_ghz < 30:
+        # 15-30 GHz: water vapor absorption region
+        if distance_from_line < 2:
+            # Very close to 22.235 GHz: high absorption
+            alpha_wv = 0.5 - 0.4 * (distance_from_line / 2.0)
+        elif distance_from_line < 5:
+            # Close to line: moderate absorption
+            alpha_wv = 0.1 + 0.1 * ((distance_from_line - 2) / 3.0)
+        else:
+            # Far from line: low absorption
+            alpha_wv = 0.05 + 0.05 * ((freq_ghz - 15) / 15.0)
+    else:
+        # Above 30 GHz: increasing with frequency
+        # Water vapor absorption increases quadratically with frequency
+        alpha_wv = 0.1 + 0.3 * ((freq_ghz - 30) / 30.0) ** 2
+
+    # Humidity scaling (linear with relative humidity)
+    humidity_factor = humidity / 50.0
+
+    # Temperature and pressure scaling (simplified)
+    # Higher temperature -> more water vapor capacity -> more absorption
+    # Higher pressure -> more absorption
+    temperature_factor = (temperature / 288.15) ** 1.5
+    pressure_factor = pressure / 101325.0
+    alpha_wv *= humidity_factor * temperature_factor * pressure_factor
+
+    return max(0.001, alpha_wv)  # Minimum 0.001 dB/km
+
+
+def calculate_comprehensive_atmospheric_loss(
+    distance: float,
+    freq: float,
+    elevation_angle: float = None,
+    temperature: float = 288.15,
+    pressure: float = 101325.0,
+    humidity: float = 50.0,
+    separate_components: bool = False,
+    use_full_itu_p676: bool = True
+):
+    """
+    Calculate comprehensive atmospheric absorption loss (Phase 3).
+
+    Uses full ITU-R P.676 model with line-by-line calculations for oxygen
+    and water vapor absorption. Falls back to simplified model if the
+    ITU-R P.676 calculator is not available.
+
+    Args:
+        distance: Path length in meters (not used, kept for compatibility)
+        freq: Frequency in Hz
+        elevation_angle: Elevation angle from ground (degrees, optional)
+        temperature: Temperature in Kelvin (default: 288.15 K = 15°C)
+        pressure: Pressure in Pa (default: 101325 Pa = 1 atm)
+        humidity: Relative humidity in % (default: 50%)
+        separate_components: If True, returns dict with separate components
+        use_full_itu_p676: If True, use full ITU-R P.676 model (default: True)
+
+    Returns:
+        float or dict: Atmospheric loss factor (linear, > 1.0) or dict with
+            components if separate_components=True
+    """
+    freq_ghz = freq / 1e9
+
+    # Convert pressure from Pa to hPa
+    pressure_hpa = pressure / 100.0
+
+    # Convert relative humidity to water vapor density (g/m³)
+    # Using simplified formula: rho_wv ≈ 7.5 * (humidity/50) at 15°C
+    # More accurate: use saturation vapor pressure
+    T_celsius = temperature - 273.15
+    # Saturation vapor pressure (Magnus formula, hPa)
+    e_sat = 6.112 * np.exp(17.67 * T_celsius / (T_celsius + 243.5))
+    # Actual vapor pressure
+    e_actual = (humidity / 100.0) * e_sat
+    # Water vapor density (g/m³)
+    water_vapor_density = (e_actual * 216.7) / temperature
+
+    # Default elevation angle for zenith if not specified
+    if elevation_angle is None:
+        elevation_deg = 90.0
+    else:
+        elevation_deg = max(elevation_angle, 1.0)  # Minimum 1 degree
+
+    # Use full ITU-R P.676 model if available and requested
+    if use_full_itu_p676 and ITU_P676_AVAILABLE:
+        try:
+            calc = get_cached_calculator()
+
+            # Get detailed attenuation breakdown
+            result = calc.total_slant_attenuation_detailed(
+                freq_ghz=freq_ghz,
+                elevation_deg=elevation_deg,
+                pressure_hpa=pressure_hpa,
+                temperature_k=temperature,
+                water_vapor_density=water_vapor_density,
+                include_water_vapor=True
+            )
+
+            loss_total_db = result['A_total_slant']
+            loss_o2_db = result['A_o_slant']
+            loss_wv_db = result['A_w_slant']
+
+            # Convert to linear loss factors
+            loss_o2 = 10 ** (loss_o2_db / 10.0)
+            loss_wv = 10 ** (loss_wv_db / 10.0)
+            loss_total = 10 ** (loss_total_db / 10.0)
+
+            if separate_components:
+                return {
+                    'total': loss_total,
+                    'oxygen': loss_o2,
+                    'water_vapor': loss_wv,
+                    'total_db': loss_total_db,
+                    'oxygen_db': loss_o2_db,
+                    'water_vapor_db': loss_wv_db,
+                    'gamma_o': result['gamma_o'],
+                    'gamma_w': result['gamma_w'],
+                    'h0': result['h0'],
+                    'h_w': result['h_w']
+                }
+            else:
+                return loss_total
+
+        except Exception as e:
+            # Fall back to simplified model on error
+            print(f"Warning: ITU-R P.676 calculation failed ({e}), using simplified model")
+
+    # Simplified model fallback
+    alpha_o2 = calculate_oxygen_absorption(freq, temperature, pressure, elevation_angle)
+    alpha_wv = calculate_water_vapor_absorption(
+        freq, humidity, temperature, pressure, elevation_angle
+    )
+
+    # Total absorption coefficient
+    alpha_total = alpha_o2 + alpha_wv  # dB/km
+
+    # Path length through atmosphere depends on elevation angle
+    # For space-to-ground links, only ~20-30 km is in the atmosphere
+    atmospheric_path_km = 25.0  # Approximate atmospheric path length (km)
+    if elevation_angle is not None:
+        # Longer path at low elevation angles
+        elev_rad = np.deg2rad(elevation_angle)
+        effective_path_multiplier = 1.0 / max(np.sin(elev_rad), 0.1)
+        # Limit multiplier for reasonable values
+        effective_path_multiplier = min(effective_path_multiplier, 3.0)
+    else:
+        effective_path_multiplier = 1.0
+
+    # Calculate losses for each component
+    loss_o2_db = alpha_o2 * atmospheric_path_km * effective_path_multiplier
+    loss_wv_db = alpha_wv * atmospheric_path_km * effective_path_multiplier
+    loss_total_db = alpha_total * atmospheric_path_km * effective_path_multiplier
+
+    # Convert to linear loss factors
+    loss_o2 = 10 ** (loss_o2_db / 10.0)
+    loss_wv = 10 ** (loss_wv_db / 10.0)
+    loss_total = 10 ** (loss_total_db / 10.0)
+
+    if separate_components:
+        return {
+            'total': loss_total,
+            'oxygen': loss_o2,
+            'water_vapor': loss_wv,
+            'total_db': loss_total_db,
+            'oxygen_db': loss_o2_db,
+            'water_vapor_db': loss_wv_db
+        }
+    else:
+        return loss_total
+
+
+def calculate_atmospheric_refraction(
+    elevation_angle: float,
+    freq: float = None,
+    temperature: float = 288.15,
+    pressure: float = 101325.0,
+    humidity: float = 50.0
+) -> Tuple[float, float]:
+    """
+    Calculate atmospheric refraction effects for space-to-ground paths.
+
+    Refraction bends the ray path, making the apparent elevation higher
+    than the true elevation, especially at low elevation angles.
+
+    Args:
+        elevation_angle: True elevation angle in degrees
+        freq: Frequency in Hz (optional, for frequency-dependent effects)
+        temperature: Temperature in Kelvin (default: 288.15 K = 15°C)
+        pressure: Pressure in Pa (default: 101325 Pa = 1 atm)
+        humidity: Relative humidity in % (default: 50%)
+
+    Returns:
+        Tuple[float, float]: (apparent_elevation, refraction_angle)
+            - apparent_elevation: Apparent elevation after refraction (degrees)
+            - refraction_angle: Refraction correction in degrees
+    """
+    if elevation_angle <= 0:
+        return elevation_angle, 0.0
+
+    # Simplified refraction model (Bennett's formula with enhancements)
+    # Refraction coefficient depends on atmospheric conditions
+    # Standard value: ~0.13 degrees / tan(elevation) for standard atmosphere
+
+    # Atmospheric condition factors
+    # Higher pressure -> more refraction
+    # Higher temperature -> less refraction
+    # Higher humidity -> more refraction (water vapor has higher refractive index)
+    pressure_factor = pressure / 101325.0
+    temperature_factor = 288.15 / temperature
+    humidity_factor = 1.0 + 0.01 * (humidity / 50.0)
+
+    # Base refraction coefficient (degrees)
+    base_refraction_coeff = 0.13
+
+    # Adjusted refraction coefficient
+    refraction_coeff = (base_refraction_coeff * pressure_factor *
+                        temperature_factor * humidity_factor)
+
+    # Refraction correction (increases at lower elevation angles)
+    elev_rad = np.deg2rad(elevation_angle)
+    refraction_correction = refraction_coeff / np.tan(elev_rad)
+
+    # Limit refraction for very low elevation angles
+    if elevation_angle < 5.0:
+        # Enhanced refraction at very low angles
+        refraction_correction *= 1.5
+    if elevation_angle < 1.0:
+        # Extreme refraction near horizon
+        refraction_correction *= 2.0
+
+    # Apparent elevation (refraction makes objects appear higher)
+    apparent_elevation = elevation_angle + refraction_correction
+
+    return apparent_elevation, refraction_correction
+
+
+def calculate_comprehensive_atmospheric_loss_vectorized(
+    distances: np.ndarray,
+    freqs: np.ndarray,
+    elevation_angles: np.ndarray = None,
+    temperature: float = 288.15,
+    pressure: float = 101325.0,
+    humidity: float = 50.0,
+    use_full_itu_p676: bool = True
+) -> np.ndarray:
+    """
+    Vectorized version of calculate_comprehensive_atmospheric_loss.
+
+    Uses full ITU-R P.676 model with line-by-line calculations for oxygen
+    and water vapor absorption. Falls back to simplified model if the
+    ITU-R P.676 calculator is not available.
+
+    Args:
+        distances: Array of path lengths in meters (not used, kept for compatibility)
+        freqs: Array of frequencies in Hz
+        elevation_angles: Array of elevation angles from ground (degrees, optional)
+        temperature: Temperature in Kelvin (default: 288.15 K = 15°C)
+        pressure: Pressure in Pa (default: 101325 Pa = 1 atm)
+        humidity: Relative humidity in % (default: 50%)
+        use_full_itu_p676: If True, use full ITU-R P.676 model (default: True)
+
+    Returns:
+        np.ndarray: Array of atmospheric loss factors (linear, > 1.0)
+    """
+    freqs = np.asarray(freqs)
+    n_points = len(freqs)
+
+    if elevation_angles is not None:
+        elevation_angles = np.asarray(elevation_angles)
+    else:
+        elevation_angles = np.full(n_points, 90.0)  # Default to zenith
+
+    # Convert pressure from Pa to hPa
+    pressure_hpa = pressure / 100.0
+
+    # Convert relative humidity to water vapor density (g/m³)
+    T_celsius = temperature - 273.15
+    e_sat = 6.112 * np.exp(17.67 * T_celsius / (T_celsius + 243.5))
+    e_actual = (humidity / 100.0) * e_sat
+    water_vapor_density = (e_actual * 216.7) / temperature
+
+    # Use full ITU-R P.676 model if available and requested
+    if use_full_itu_p676 and ITU_P676_AVAILABLE:
+        try:
+            calc = get_cached_calculator()
+
+            # Calculate attenuation for each point
+            loss_total = np.zeros(n_points)
+            for i in range(n_points):
+                freq_ghz = freqs[i] / 1e9
+                elev_deg = max(float(elevation_angles[i]), 1.0)
+
+                atten_db = calc.total_slant_attenuation(
+                    freq_ghz=freq_ghz,
+                    elevation_deg=elev_deg,
+                    pressure_hpa=pressure_hpa,
+                    temperature_k=temperature,
+                    water_vapor_density=water_vapor_density,
+                    include_water_vapor=True
+                )
+                loss_total[i] = 10 ** (atten_db / 10.0)
+
+            return loss_total
+
+        except Exception as e:
+            # Fall back to simplified model on error
+            print(f"Warning: ITU-R P.676 calculation failed ({e}), using simplified model")
+
+    # Simplified model fallback (vectorized)
+    freq_ghz = freqs / 1e9
+
+    # Oxygen absorption (vectorized)
+    oxygen_band_center = 60.0
+    distance_from_peak = np.abs(freq_ghz - oxygen_band_center)
+
+    # Initialize alpha_o2 array
+    alpha_o2 = np.zeros_like(freq_ghz)
+
+    # Below 50 GHz
+    mask_below_50 = freq_ghz < 50
+    mask_below_40 = freq_ghz < 40
+    alpha_o2[mask_below_40] = 0.01 * (freq_ghz[mask_below_40] / 40.0) ** 2
+    mask_40_50 = mask_below_50 & ~mask_below_40
+    alpha_o2[mask_40_50] = 0.1 + 1.9 * ((freq_ghz[mask_40_50] - 40) / 10.0)
+
+    # 50-70 GHz (near oxygen line)
+    mask_50_70 = (freq_ghz >= 50) & (freq_ghz < 70)
+    mask_close = mask_50_70 & (distance_from_peak < 5)
+    mask_moderate = mask_50_70 & (distance_from_peak >= 5) & (distance_from_peak < 10)
+    mask_far = mask_50_70 & (distance_from_peak >= 10)
+
+    alpha_o2[mask_close] = 15.0 - 12.0 * (distance_from_peak[mask_close] / 5.0)
+    alpha_o2[mask_moderate] = 3.0 - 2.0 * ((distance_from_peak[mask_moderate] - 5) / 5.0)
+    alpha_o2[mask_far] = 1.0 + 0.5 * ((freq_ghz[mask_far] - 50) / 20.0)
+
+    # Above 70 GHz
+    mask_above_70 = freq_ghz >= 70
+    alpha_o2[mask_above_70] = np.maximum(0.5, 1.5 - 0.5 * ((freq_ghz[mask_above_70] - 70) / 30.0))
+
+    # Apply pressure and temperature scaling
+    pressure_factor = pressure / 101325.0
+    temperature_factor = (288.15 / temperature) ** 0.5
+    alpha_o2 *= pressure_factor * temperature_factor
+    alpha_o2 = np.maximum(0.001, alpha_o2)
+
+    # Water vapor absorption (vectorized)
+    water_vapor_line = 22.235
+    distance_from_line = np.abs(freq_ghz - water_vapor_line)
+
+    # Initialize alpha_wv array
+    alpha_wv = np.zeros_like(freq_ghz)
+
+    # Below 15 GHz
+    mask_below_15 = freq_ghz < 15
+    alpha_wv[mask_below_15] = 0.01 * (freq_ghz[mask_below_15] / 15.0) ** 2
+
+    # 15-30 GHz
+    mask_15_30 = (freq_ghz >= 15) & (freq_ghz < 30)
+    mask_very_close = mask_15_30 & (distance_from_line < 2)
+    mask_close_wv = mask_15_30 & (distance_from_line >= 2) & (distance_from_line < 5)
+    mask_far_wv = mask_15_30 & (distance_from_line >= 5)
+
+    alpha_wv[mask_very_close] = 0.5 - 0.4 * (distance_from_line[mask_very_close] / 2.0)
+    alpha_wv[mask_close_wv] = 0.1 + 0.1 * ((distance_from_line[mask_close_wv] - 2) / 3.0)
+    alpha_wv[mask_far_wv] = 0.05 + 0.05 * ((freq_ghz[mask_far_wv] - 15) / 15.0)
+
+    # Above 30 GHz
+    mask_above_30 = freq_ghz >= 30
+    alpha_wv[mask_above_30] = 0.1 + 0.3 * ((freq_ghz[mask_above_30] - 30) / 30.0) ** 2
+
+    # Apply humidity, temperature, and pressure scaling
+    humidity_factor = humidity / 50.0
+    temperature_factor_wv = (temperature / 288.15) ** 1.5
+    pressure_factor_wv = pressure / 101325.0
+    alpha_wv *= humidity_factor * temperature_factor_wv * pressure_factor_wv
+    alpha_wv = np.maximum(0.001, alpha_wv)
+
+    # Total absorption coefficient
+    alpha_total = alpha_o2 + alpha_wv  # dB/km
+
+    # Path length through atmosphere
+    atmospheric_path_km = 25.0
+    if elevation_angles is not None:
+        elev_rad = np.deg2rad(elevation_angles)
+        effective_path_multiplier = 1.0 / np.maximum(np.sin(elev_rad), 0.1)
+        effective_path_multiplier = np.minimum(effective_path_multiplier, 3.0)
+    else:
+        effective_path_multiplier = np.ones_like(freqs)
+
+    # Total atmospheric loss
+    loss_total_db = alpha_total * atmospheric_path_km * effective_path_multiplier
+    loss_total = 10 ** (loss_total_db / 10.0)
+
+    return loss_total
+
+
+# =============================================================================
+# Ground Reflection Functions
+# =============================================================================
+
+def calculate_specular_reflection_point(
+    starlink_ecef: np.ndarray,
+    weather_sat_ecef: np.ndarray,
+    earth_radius: float = R_earth,
+    max_iterations: int = 50,
+    tolerance: float = 1e-6
+) -> Tuple[Optional[np.ndarray], float, float]:
+    """
+    Calculate the specular reflection point on Earth's surface for a Starlink
+    satellite signal reflecting to a weather satellite.
+
+    Uses geometric optics: the reflection point is where the angle of incidence
+    equals the angle of reflection (law of reflection).
+
+    Implements an iterative method to find the true specular reflection point
+    that satisfies the law of reflection, which minimizes path length while
+    maintaining equal incident and reflected angles.
+
+    Args:
+        starlink_ecef: Starlink satellite position in ECEF [x, y, z] (meters)
+        weather_sat_ecef: Weather satellite position in ECEF [x, y, z] (meters)
+        earth_radius: Earth radius in meters (default: WGS84)
+        max_iterations: Maximum number of iterations for convergence (default: 50)
+        tolerance: Convergence tolerance for angle difference in radians (default: 1e-6)
+
+    Returns:
+        Tuple[Optional[np.ndarray], float, float]:
+            - reflection_point_ecef: Reflection point on Earth surface in ECEF [x, y, z],
+              or None if no valid reflection point exists
+            - path_length_starlink: Distance from Starlink to reflection point (meters)
+            - path_length_weather_sat: Distance from reflection point to weather sat (meters)
+    """
+    starlink_ecef = np.asarray(starlink_ecef, dtype=np.float64).flatten()
+    weather_sat_ecef = np.asarray(weather_sat_ecef, dtype=np.float64).flatten()
+
+    if len(starlink_ecef) != 3 or len(weather_sat_ecef) != 3:
+        return None, 0.0, 0.0
+
+    # Vector from Earth center to Starlink
+    r_starlink = np.linalg.norm(starlink_ecef)
+    r_weather_sat = np.linalg.norm(weather_sat_ecef)
+
+    # Check if both satellites are above Earth
+    if r_starlink < earth_radius or r_weather_sat < earth_radius:
+        return None, 0.0, 0.0
+
+    # Unit vectors from Earth center
+    u_starlink = starlink_ecef / r_starlink
+    u_weather_sat = weather_sat_ecef / r_weather_sat
+
+    # Check if satellites are on opposite sides (no valid reflection)
+    dot_product = np.dot(u_starlink, u_weather_sat)
+    if dot_product < -0.99:  # Nearly opposite (cos(180°) = -1)
+        return None, 0.0, 0.0
+
+    # Use Fermat's principle: the specular reflection point minimizes
+    # the total path length (Starlink → reflection point → weather sat).
+    # This automatically satisfies the law of reflection.
+
+    # The reflection point lies on the great circle arc between the two satellites.
+    # We'll use golden section search to find the point that minimizes path length.
+
+    def total_path_length(alpha):
+        """
+        Calculate total path length for a point on the great circle.
+
+        Args:
+            alpha: Interpolation parameter (0 = Starlink direction, 1 = weather sat direction)
+
+        Returns:
+            Total path length in meters
+        """
+        # Interpolate between u_starlink and u_weather_sat along great circle
+        u_point = (1 - alpha) * u_starlink + alpha * u_weather_sat
+        u_point_norm = np.linalg.norm(u_point)
+        if u_point_norm < 1e-12:
+            return np.inf  # Invalid point
+        u_point = u_point / u_point_norm
+        point = u_point * earth_radius
+
+        # Calculate distances
+        dist1 = np.linalg.norm(point - starlink_ecef)
+        dist2 = np.linalg.norm(weather_sat_ecef - point)
+
+        # Check validity
+        if dist1 < 1e3 or dist2 < 1e3:
+            return np.inf
+
+        return dist1 + dist2
+
+    # Golden section search for minimum path length
+    # This is a robust 1D optimization method
+    # Use better initial bounds based on weighted average
+    weight_starlink = 1.0 / (r_starlink - earth_radius)
+    weight_weather_sat = 1.0 / (r_weather_sat - earth_radius)
+    total_weight = weight_starlink + weight_weather_sat
+    alpha_initial = weight_weather_sat / total_weight  # Closer to closer satellite
+
+    # Narrow initial search range around the initial guess
+    search_range = 0.3  # Search ±30% around initial guess
+    a = max(0.0, alpha_initial - search_range)
+    b = min(1.0, alpha_initial + search_range)
+
+    phi = (1 + np.sqrt(5)) / 2  # Golden ratio
+    tolerance_alpha = 1e-6  # Convergence tolerance (relaxed from 1e-8)
+
+    # Reduced iterations: golden section converges quickly
+    for iteration in range(25):  # Reduced from 50 to 25 (usually converges in ~15)
+        if abs(b - a) < tolerance_alpha:
+            break
+
+        c = b - (b - a) / phi
+        d = a + (b - a) / phi
+
+        fc = total_path_length(c)
+        fd = total_path_length(d)
+
+        if fc < fd:
+            b = d
+        else:
+            a = c
+
+    # Final reflection point
+    alpha_opt = (a + b) / 2.0
+    u_reflection = (1 - alpha_opt) * u_starlink + alpha_opt * u_weather_sat
+    u_reflection = u_reflection / np.linalg.norm(u_reflection)
+    reflection_point = u_reflection * earth_radius
+
+    # Verify the result satisfies law of reflection (optional check)
+    # This is automatically satisfied by Fermat's principle, but we can verify
+    vec_to_starlink = starlink_ecef - reflection_point
+    vec_to_weather_sat = weather_sat_ecef - reflection_point
+    dist_to_starlink = np.linalg.norm(vec_to_starlink)
+    dist_to_weather_sat = np.linalg.norm(vec_to_weather_sat)
+
+    if dist_to_starlink < 1e3 or dist_to_weather_sat < 1e3:
+        return None, 0.0, 0.0
+
+    # Optional: verify law of reflection (for diagnostics)
+    # This should be satisfied automatically, but we can check
+    surface_normal = u_reflection
+    incident_dir = -vec_to_starlink / dist_to_starlink
+    reflected_dir = vec_to_weather_sat / dist_to_weather_sat
+    cos_incidence = np.clip(np.dot(incident_dir, surface_normal), -1.0, 1.0)
+    cos_reflection = np.clip(np.dot(reflected_dir, surface_normal), -1.0, 1.0)
+    angle_incidence = np.arccos(cos_incidence)
+    angle_reflection = np.arccos(cos_reflection)
+    angle_error = abs(angle_incidence - angle_reflection)
+
+    # If angle error is too large, something went wrong
+    if angle_error > 0.01:  # ~0.57 degrees
+        # Fallback: try iterative refinement
+        for refine_iter in range(20):
+            if angle_error < tolerance:
+                break
+
+            # Move toward the satellite with larger angle
+            if angle_incidence > angle_reflection:
+                correction_dir = u_starlink - np.dot(u_starlink, u_reflection) * u_reflection
+            else:
+                correction_dir = u_weather_sat - np.dot(u_weather_sat, u_reflection) * u_reflection
+
+            correction_norm = np.linalg.norm(correction_dir)
+            if correction_norm < 1e-12:
+                break
+
+            correction_dir = correction_dir / correction_norm
+            step_size = min(angle_error * 0.1, 0.05)
+            u_reflection = u_reflection + step_size * correction_dir
+            u_reflection = u_reflection / np.linalg.norm(u_reflection)
+            reflection_point = u_reflection * earth_radius
+
+            # Recalculate
+            vec_to_starlink = starlink_ecef - reflection_point
+            vec_to_weather_sat = weather_sat_ecef - reflection_point
+            dist_to_starlink = np.linalg.norm(vec_to_starlink)
+            dist_to_weather_sat = np.linalg.norm(vec_to_weather_sat)
+            surface_normal = u_reflection
+            incident_dir = -vec_to_starlink / dist_to_starlink
+            reflected_dir = vec_to_weather_sat / dist_to_weather_sat
+            cos_incidence = np.clip(np.dot(incident_dir, surface_normal), -1.0, 1.0)
+            cos_reflection = np.clip(np.dot(reflected_dir, surface_normal), -1.0, 1.0)
+            angle_incidence = np.arccos(cos_incidence)
+            angle_reflection = np.arccos(cos_reflection)
+            angle_error = abs(angle_incidence - angle_reflection)
+
+    # Final path lengths
+    path_starlink = np.linalg.norm(reflection_point - starlink_ecef)
+    path_weather_sat = np.linalg.norm(weather_sat_ecef - reflection_point)
+
+    # Validate result
+    if path_starlink < 1e3 or path_weather_sat < 1e3:
+        return None, 0.0, 0.0
+
+    # Check visibility: both satellites should see the reflection point
+    # (reflection point should be below horizon for both)
+    # This is satisfied if the reflection point is on the Earth's surface
+    # and both satellites are above it
+
+    return reflection_point, path_starlink, path_weather_sat
+
+
+def calculate_fresnel_reflection_coefficient(
+    incidence_angle: float,
+    surface_type: str = 'land',
+    freq: float = 23.8e9,
+    polarization: str = 'mixed'
+) -> float:
+    """
+    Calculate Fresnel reflection coefficient for ground reflection.
+
+    Args:
+        incidence_angle: Incidence angle in degrees (0 = normal, 90 = grazing)
+        surface_type: Surface type ('water', 'land', 'ice', 'mixed')
+            - 'water': Sea water (high permittivity, high loss, strong reflection)
+            - 'land': Typical land surface (soil, vegetation, moderate reflection)
+            - 'ice': Ice/snow (low permittivity, very low loss, weak reflection)
+            - 'mixed': Same as 'land' - represents typical/average terrestrial surface
+              (good default when surface type is unknown or heterogeneous)
+        freq: Frequency in Hz (for frequency-dependent permittivity)
+        polarization: Polarization ('horizontal', 'vertical', 'mixed')
+            'mixed' uses average of both polarizations
+
+    Returns:
+        float: Reflection coefficient (0-1, linear power)
+    """
+    if incidence_angle < 0 or incidence_angle >= 90:
+        return 0.0
+
+    # Convert to radians
+    theta_i = np.deg2rad(incidence_angle)
+
+    # Frequency-dependent permittivity (approximate)
+    freq_ghz = freq / 1e9
+
+    # Complex permittivity (epsilon = epsilon' - j*epsilon'')
+    # Values at microwave frequencies
+    if surface_type == 'water':
+        # Sea water: high permittivity, frequency-dependent
+        if freq_ghz < 30:
+            epsilon_real = 70.0 - 0.3 * freq_ghz  # Real part
+            epsilon_imag = 30.0 - 0.2 * freq_ghz   # Imaginary part (loss)
+        else:
+            epsilon_real = 60.0
+            epsilon_imag = 25.0
+    elif surface_type == 'ice':
+        epsilon_real = 3.15
+        epsilon_imag = 0.001  # Very low loss
+    else:  # 'land' or 'mixed'
+        # Typical land: soil, vegetation
+        # Note: 'mixed' uses the same properties as 'land' - represents
+        # a typical/average terrestrial surface (good default for heterogeneous areas)
+        epsilon_real = 5.0 - 0.05 * freq_ghz
+        epsilon_imag = 0.5
+
+    # Complex permittivity
+    epsilon = epsilon_real - 1j * epsilon_imag
+
+    # Calculate reflection coefficients for both polarizations
+    # Horizontal polarization (perpendicular to plane of incidence)
+    # sin_theta_t = sin(theta_i) / sqrt(epsilon)
+    sqrt_epsilon = np.sqrt(epsilon)  # Complex square root
+    sin_theta_t = np.sin(theta_i) / sqrt_epsilon
+
+    # Check for total internal reflection (shouldn't happen for air-to-ground)
+    if np.abs(sin_theta_t) >= 1.0:
+        # Total internal reflection
+        R_h = 1.0
+        R_v = 1.0
+    else:
+        cos_theta_t = np.sqrt(1.0 - sin_theta_t**2)  # Complex sqrt
+
+        # Horizontal polarization reflection coefficient
+        numerator_h = np.cos(theta_i) - sqrt_epsilon * cos_theta_t
+        denominator_h = np.cos(theta_i) + sqrt_epsilon * cos_theta_t
+        R_h = np.abs(numerator_h / denominator_h)**2
+
+        # Vertical polarization reflection coefficient
+        numerator_v = sqrt_epsilon * np.cos(theta_i) - cos_theta_t
+        denominator_v = sqrt_epsilon * np.cos(theta_i) + cos_theta_t
+        R_v = np.abs(numerator_v / denominator_v)**2
+
+    # Select polarization
+    if polarization == 'horizontal':
+        return R_h
+    elif polarization == 'vertical':
+        return R_v
+    else:  # 'mixed' - average
+        return 0.5 * (R_h + R_v)
+
+
+def starlink_ground_reflection_to_weather_sat_link_budget(
+    starlink_ecef: np.ndarray,
+    weather_sat_ecef: np.ndarray,
+    weather_sat_antenna: Antenna,
+    starlink_antenna: Antenna,
+    freq: float,
+    starlink_fundamental_freq: float = None,
+    harmonics: list = None,
+    observation_bandwidth: float = None,
+    surface_type: str = 'mixed',
+    polarization_loss_factor: float = 0.5,
+    include_atmospheric_loss: bool = True,
+    use_enhanced_atmospheric: bool = True,
+    temperature: float = 288.15,
+    pressure: float = 101325.0,
+    humidity: float = 50.0,
+    return_diagnostics: bool = False
+) -> Tuple[float, Optional[dict]]:
+    """
+    Calculate link budget for Starlink ground reflection interference.
+
+    Path: Starlink (main lobe) → Earth surface (reflection) → Weather satellite
+
+    Args:
+        starlink_ecef: Starlink position in ECEF [x, y, z] (meters)
+        weather_sat_ecef: Weather satellite position in ECEF [x, y, z] (meters)
+        weather_sat_antenna: Weather satellite antenna object
+        starlink_antenna: Starlink antenna object
+        freq: Observation frequency in Hz
+        starlink_fundamental_freq: Starlink fundamental frequency (Hz)
+        harmonics: List of (frequency_multiplier, power_reduction_factor) tuples
+        observation_bandwidth: Observation bandwidth (Hz)
+        surface_type: Surface type ('water', 'land', 'ice', 'mixed')
+        polarization_loss_factor: Polarization mismatch loss factor (linear, 0-1)
+        include_atmospheric_loss: Whether to include atmospheric loss
+        use_enhanced_atmospheric: Whether to use enhanced atmospheric model
+        temperature: Temperature in Kelvin
+        pressure: Pressure in Pa
+        humidity: Relative humidity in %
+        return_diagnostics: If True, return diagnostic information (default: False)
+
+    Returns:
+        float or Tuple[float, Optional[dict]]:
+            - If return_diagnostics=False: link budget (dimensionless)
+            - If return_diagnostics=True: (link_budget, diagnostics_dict)
+              where diagnostics_dict contains:
+                - 'valid': bool - whether reflection point is valid
+                - 'starlink_angle_from_nadir': float - angle in degrees
+                - 'incidence_angle': float - incidence angle in degrees
+                - 'path_starlink': float - path length in meters
+                - 'path_weather_sat': float - path length in meters
+                - 'reflection_coeff': float - Fresnel reflection coefficient
+                - 'gain_starlink': float - Starlink gain (linear)
+                - 'gain_weather_sat': float - Weather sat gain (linear)
+    """
+    # Calculate reflection point
+    reflection_point, path_starlink, path_weather_sat = (
+        calculate_specular_reflection_point(
+            starlink_ecef, weather_sat_ecef
+        )
+    )
+
+    # Initialize diagnostics
+    diagnostics = None
+    if return_diagnostics:
+        diagnostics = {
+            'valid': reflection_point is not None,
+            'starlink_angle_from_nadir': 0.0,
+            'incidence_angle': 0.0,
+            'path_starlink': path_starlink,
+            'path_weather_sat': path_weather_sat,
+            'reflection_coeff': 0.0,
+            'gain_starlink': 0.0,
+            'gain_weather_sat': 0.0
+        }
+
+    if reflection_point is None:
+        if return_diagnostics:
+            return 0.0, diagnostics
+        return 0.0
+
+    # Transform reflection point to weather satellite frame
+    weather_sat_velocity_ecef = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+    reflection_dec, reflection_caz = ecef_to_weather_sat_frame(
+        reflection_point[np.newaxis, :],
+        weather_sat_ecef[np.newaxis, :],
+        weather_sat_velocity_ecef[np.newaxis, :]
+    )
+    reflection_dec = reflection_dec[0]
+    reflection_caz = reflection_caz[0]
+
+    # Weather satellite receive gain (main lobe looking at Earth, at reflection point)
+    gain_weather_sat = weather_sat_antenna.get_gain_value(reflection_dec, reflection_caz)
+
+    # Calculate incidence angle at reflection point
+    # Angle between Starlink-to-reflection vector and surface normal
+    surface_normal = reflection_point / np.linalg.norm(reflection_point)
+    vec_starlink_to_reflection = reflection_point - starlink_ecef
+    vec_starlink_to_reflection_unit = (
+        vec_starlink_to_reflection / np.linalg.norm(vec_starlink_to_reflection)
+    )
+
+    # Incidence angle (angle from surface normal)
+    cos_incidence = np.clip(np.dot(-vec_starlink_to_reflection_unit, surface_normal), -1.0, 1.0)
+    incidence_angle_deg = np.rad2deg(np.arccos(cos_incidence))
+
+    # Starlink main lobe gain (toward reflection point)
+    # Transform reflection point to Starlink frame (simplified: assume Starlink pointing at nadir)
+    starlink_to_reflection_vec = reflection_point - starlink_ecef
+    starlink_to_reflection_dist = np.linalg.norm(starlink_to_reflection_vec)
+
+    # For Starlink, assume it's pointing at Earth (nadir)
+    # The reflection point is at some angle from nadir
+    starlink_nadir = -starlink_ecef / np.linalg.norm(starlink_ecef)
+    cos_starlink_angle = np.clip(
+        np.dot(starlink_to_reflection_vec / starlink_to_reflection_dist, starlink_nadir),
+        -1.0, 1.0
+    )
+    starlink_angle_from_nadir = np.rad2deg(np.arccos(cos_starlink_angle))
+
+    # Starlink gain toward reflection point (main lobe, not backlobe)
+    # Use the angle from nadir to get gain
+    starlink_dec = np.deg2rad(starlink_angle_from_nadir)
+    starlink_caz = 0.0  # Azimuth doesn't matter for symmetric pattern
+    gain_starlink = starlink_antenna.get_gain_value(starlink_dec, starlink_caz)
+
+    # Fresnel reflection coefficient
+    reflection_coeff = calculate_fresnel_reflection_coefficient(
+        incidence_angle_deg, surface_type, freq
+    )
+
+    # Update diagnostics if requested
+    if return_diagnostics:
+        diagnostics['starlink_angle_from_nadir'] = starlink_angle_from_nadir
+        diagnostics['incidence_angle'] = incidence_angle_deg
+        diagnostics['reflection_coeff'] = reflection_coeff
+        diagnostics['gain_starlink'] = gain_starlink
+        diagnostics['gain_weather_sat'] = gain_weather_sat
+
+    # Free-space path loss for both legs
+    if starlink_fundamental_freq is not None:
+        freq_for_path_loss = starlink_fundamental_freq
+    else:
+        freq_for_path_loss = freq
+
+    L_fs_starlink = free_space_loss(path_starlink, freq_for_path_loss)
+    L_fs_weather_sat = free_space_loss(path_weather_sat, freq)
+
+    # Atmospheric loss (only on ground-to-space leg, not space-to-space)
+    if include_atmospheric_loss:
+        # Calculate elevation angle from ground (reflection point) to weather sat
+        # Elevation = 90° - angle from nadir
+        elevation_from_ground = 90.0 - np.rad2deg(reflection_dec)
+
+        if use_enhanced_atmospheric:
+            # Use enhanced atmospheric model
+            L_atm = calculate_comprehensive_atmospheric_loss(
+                path_weather_sat, freq, elevation_from_ground,
+                temperature, pressure, humidity
+            )
+        else:
+            # Use simplified atmospheric model
+            L_atm = calculate_atmospheric_loss(path_weather_sat, freq, elevation_from_ground)
+    else:
+        L_atm = 1.0
+
+    # Base link budget at fundamental frequency
+    base_link_budget = (
+        gain_weather_sat *
+        gain_starlink *
+        reflection_coeff *
+        (1.0 / L_fs_starlink) *
+        (1.0 / L_fs_weather_sat) *
+        (1.0 / L_atm) *
+        polarization_loss_factor
+    )
+
+    # Check if fundamental falls within observation bandwidth
+    if (starlink_fundamental_freq is not None and observation_bandwidth is not None):
+        freq_min = freq - observation_bandwidth / 2
+        freq_max = freq + observation_bandwidth / 2
+
+        if freq_min <= starlink_fundamental_freq <= freq_max:
+            link_budget = base_link_budget
+        else:
+            link_budget = 0.0
+
+        # Add harmonic contributions
+        if harmonics is not None:
+            for harmonic_mult, harmonic_factor in harmonics:
+                harmonic_freq = starlink_fundamental_freq * harmonic_mult
+
+                if freq_min <= harmonic_freq <= freq_max:
+                    # Recalculate path losses at harmonic frequency
+                    L_fs_starlink_harm = free_space_loss(path_starlink, harmonic_freq)
+                    L_fs_weather_sat_harm = free_space_loss(path_weather_sat, harmonic_freq)
+
+                    if include_atmospheric_loss:
+                        if use_enhanced_atmospheric:
+                            L_atm_harm = calculate_comprehensive_atmospheric_loss(
+                                path_weather_sat, harmonic_freq, elevation_from_ground,
+                                temperature, pressure, humidity
+                            )
+                        else:
+                            L_atm_harm = calculate_atmospheric_loss(
+                                path_weather_sat, harmonic_freq, elevation_from_ground
+                            )
+                    else:
+                        L_atm_harm = 1.0
+
+                    # Reflection coefficient at harmonic frequency
+                    reflection_coeff_harm = calculate_fresnel_reflection_coefficient(
+                        incidence_angle_deg, surface_type, harmonic_freq
+                    )
+
+                    harmonic_link_budget = (
+                        gain_weather_sat *
+                        gain_starlink *
+                        reflection_coeff_harm *
+                        (1.0 / L_fs_starlink_harm) *
+                        (1.0 / L_fs_weather_sat_harm) *
+                        (1.0 / L_atm_harm) *
+                        polarization_loss_factor *
+                        harmonic_factor
+                    )
+
+                    link_budget += harmonic_link_budget
+    else:
+        link_budget = base_link_budget
+
+    if return_diagnostics:
+        return link_budget, diagnostics
+    else:
+        return link_budget
+
+
+def model_weather_sat_observed_power_phase3(
+    weather_sat_trajectory: Trajectory,
+    weather_sat_instrument: Instrument,
+    starlink_constellation: Constellation,
+    observation_times: np.ndarray,
+    observer_lat: float,
+    observer_lon: float,
+    observer_alt: float,
+    target_lat: float,
+    target_lon: float,
+    target_alt: float,
+    freq_channels: np.ndarray,
+    ground_emitters: pd.DataFrame = None,
+    ground_emitter_antenna: Antenna = None,
+    ground_emitter_eirp_dbw: float = 30.0,
+    earth_brightness_temp: float = 280.0,
+    sky_brightness_temp: float = 2.73,
+    system_temp: float = 300.0,
+    starlink_eirp_dbw: float = 40.0,
+    enable_terrain_masking: bool = True,
+    include_atmospheric_loss: bool = True,
+    use_enhanced_atmospheric: bool = True,
+    dem_file: Optional[str] = None,
+    polarization_loss_factor: float = 0.5,
+    starlink_fundamental_freq: float = None,
+    harmonics: list = None,
+    ground_emitter_fundamental_freq: float = None,
+    ground_emitter_harmonics: list = None,
+    ground_emitter_oobe_suppression_db: float = None,
+    ground_emitter_oobe_freq_offset_max: float = None,
+    temperature: float = 288.15,
+    pressure: float = 101325.0,
+    humidity: float = 50.0,
+    include_refraction: bool = False,
+    include_ground_reflection: bool = True,
+    surface_type: str = 'mixed'
+) -> dict:
+    """
+    Model observed power at weather satellite from all RFI sources (Phase 3: enhanced atmospheric effects).
+
+    This extends Phase 2 with enhanced atmospheric modeling:
+    - Comprehensive atmospheric absorption (separate oxygen and water vapor)
+    - Atmospheric refraction effects (optional)
+    - Temperature, pressure, and humidity-dependent modeling
+
+    Args:
+        weather_sat_trajectory: Weather satellite trajectory
+        weather_sat_instrument: Weather satellite instrument
+        starlink_constellation: Starlink constellation
+        observation_times: Array of observation timestamps
+        observer_lat: Observer latitude (degrees)
+        observer_lon: Observer longitude (degrees)
+        observer_alt: Observer altitude (meters)
+        target_lat: Target latitude (degrees) - center of resolution element
+        target_lon: Target longitude (degrees)
+        target_alt: Target altitude (meters)
+        freq_channels: Frequency channels in Hz
+        ground_emitters: DataFrame with ground emitter positions (columns: 'lat', 'lon', 'alt')
+        ground_emitter_antenna: Ground emitter antenna object
+        ground_emitter_eirp_dbw: Ground emitter EIRP in dBW
+        earth_brightness_temp: Earth brightness temperature (K)
+        sky_brightness_temp: Sky background temperature (K)
+        system_temp: System temperature (K)
+        starlink_eirp_dbw: Starlink EIRP in dBW
+        enable_terrain_masking: Whether to check horizon visibility for ground emitters
+        include_atmospheric_loss: Whether to include atmospheric absorption loss
+        use_enhanced_atmospheric: If True, use Phase 3 enhanced atmospheric model.
+            If False, use Phase 2 simplified model (for comparison).
+        dem_file: Path to DEM GeoTIFF file for terrain masking (optional)
+        polarization_loss_factor: Polarization mismatch loss factor (linear, 0-1).
+            Default 0.5 = -3 dB for circular (Starlink) to linear (Suomi-NPP) mismatch.
+        starlink_fundamental_freq: Starlink fundamental frequency (Hz). If None,
+            harmonics are not calculated.
+        harmonics: List of (frequency_multiplier, power_reduction_factor) tuples.
+            Example: [(2.0, 0.01), (3.0, 0.003), (4.0, 0.001)]
+        ground_emitter_fundamental_freq: Ground emitter fundamental frequency (Hz). If None,
+            interference is calculated at observation frequency (legacy behavior).
+        ground_emitter_harmonics: List of (frequency_multiplier, power_reduction_factor) tuples
+            for ground emitter harmonics.
+        ground_emitter_oobe_suppression_db: OOBE suppression level in dB relative to in-band power
+        ground_emitter_oobe_freq_offset_max: Maximum frequency offset for OOBE consideration (Hz)
+        temperature: Temperature in Kelvin (default: 288.15 K = 15°C)
+        pressure: Pressure in Pa (default: 101325 Pa = 1 atm)
+        humidity: Relative humidity in % (default: 50%)
+        include_refraction: Whether to include atmospheric refraction effects (default: False)
+        include_ground_reflection: Whether to include Starlink ground reflection effects (default: True)
+        surface_type: Surface type for reflection ('water', 'land', 'ice', 'mixed') (default: 'mixed')
+            - 'water': Sea water (strong reflection, especially at grazing angles)
+            - 'land': Typical land surface (soil, vegetation, moderate reflection)
+            - 'ice': Ice/snow (weak reflection)
+            - 'mixed': Same as 'land' - typical/average terrestrial surface (good default)
+
+    Returns:
+        dict: Dictionary with total and individual components of observed power in dBW.
+              Keys: 'total', 'starlink', 'ground_emitter', 'earth', 'sky', 'system'.
+              Values: np.ndarray of shape (n_times, n_freqs)
+    """
+    # Phase 3 extends Phase 2, so we call phase2 but replace atmospheric loss calculations
+    # For now, we'll modify the phase2 function call to use enhanced atmospheric model
+    # by passing a flag, but since phase2 doesn't have this, we'll need to modify
+    # the atmospheric loss calculation within the phase2 function call
+
+    # Call phase2 function first to get base results
+    # We'll need to modify the atmospheric loss calculation after calling phase2
+    # Actually, it's better to copy phase2 and modify it to use enhanced atmospheric model
+
+    # For Phase 3, we'll use the same structure as phase2 but replace
+    # calculate_atmospheric_loss() calls with calculate_comprehensive_atmospheric_loss()
+
+    # Since we can't easily modify phase2 without changing it, we'll create
+    # a modified version that uses enhanced atmospheric effects
+    # The key difference is in the ground emitter link budget calculation
+
+    n_times = len(observation_times)
+    n_freqs = len(freq_channels)
+
+    # Initialize DEM terrain masker if DEM file is provided
+    dem_masker = None
+    if enable_terrain_masking and dem_file is not None:
+        dem_masker = DEMTerrainMasker(dem_file)
+        if dem_masker.dem_data is None:
+            print("  Warning: DEM loading failed, using geometric horizon check only")
+    elif enable_terrain_masking:
+        print("  Note: DEM file not provided, using geometric horizon check only")
+
+    # Get weather satellite antenna
+    weather_sat_antenna = weather_sat_instrument.get_antenna()
+
+    # Get Starlink antenna (backlobe pattern)
+    starlink_antenna = starlink_constellation.get_antenna()
+
+    # Get bandwidth
+    bandwidth = weather_sat_instrument.get_bandwidth()
+
+    # Compute weather satellite ECEF positions and velocities
+    ws_ecef_pos, ws_ecef_vel = compute_weather_sat_ecef_from_trajectory(
+        weather_sat_trajectory,
+        observer_lat, observer_lon, observer_alt
+    )
+
+    # Convert target location to ECEF
+    target_ecef = latlonalt_to_ecef(target_lat, target_lon, target_alt)
+
+    # Get Starlink trajectory data
+    starlink_traj_df = starlink_constellation.sats.copy()
+    starlink_traj_df = starlink_traj_df.sort_values('times').reset_index(drop=True)
+
+    # Initialize result arrays for total and individual components
+    result_power = np.zeros((n_times, n_freqs))  # Will store total power in W
+    result_starlink = np.zeros((n_times, n_freqs))  # Starlink interference (backlobe)
+    result_starlink_reflection = np.zeros((n_times, n_freqs))  # Starlink ground reflection
+    result_ground_emitter = np.zeros((n_times, n_freqs))  # Ground emitter interference
+    result_earth = np.zeros((n_times, n_freqs))  # Earth brightness
+    result_sky = np.zeros((n_times, n_freqs))  # Sky background
+    result_system = np.zeros((n_times, n_freqs))  # System noise
+
+    print(f"  Processing {n_times} time steps and {n_freqs} frequency channels...")
+    print(f"  Total Starlink satellites in constellation: {starlink_traj_df['sat'].nunique()}")
+    if ground_emitters is not None:
+        print(f"  Total ground emitters: {len(ground_emitters)}")
+    if use_enhanced_atmospheric:
+        print("  Using Phase 3 enhanced atmospheric model (comprehensive O2/H2O absorption)")
+    else:
+        print("  Using Phase 2 simplified atmospheric model (for comparison)")
+    if include_ground_reflection:
+        print(f"  Ground reflection enabled (surface type: {surface_type})")
+
+    # Process each time step
+    for t_idx, obs_time in enumerate(observation_times):
+        if (t_idx + 1) % max(1, n_times // 10) == 0 or (t_idx + 1) == n_times:
+            print(f"    Progress: {t_idx + 1}/{n_times} ({100*(t_idx+1)/n_times:.1f}%)")
+
+        # Find weather satellite position at this time
+        ws_mask = ws_ecef_pos['times'] == obs_time
+        if not ws_mask.any():
+            # Interpolate or use nearest
+            time_diffs = np.abs((ws_ecef_pos['times'] - obs_time).dt.total_seconds())
+            nearest_idx = time_diffs.idxmin()
+            ws_ecef = ws_ecef_pos.iloc[nearest_idx][['x', 'y', 'z']].values
+            ws_vel = ws_ecef_vel.iloc[nearest_idx][['vx', 'vy', 'vz']].values
+        else:
+            ws_ecef = ws_ecef_pos[ws_mask].iloc[0][['x', 'y', 'z']].values
+            ws_vel = ws_ecef_vel[ws_mask].iloc[0][['vx', 'vy', 'vz']].values
+
+        # Transform target to weather satellite frame
+        target_dec, target_caz = ecef_to_weather_sat_frame(
+            target_ecef[np.newaxis, :],
+            ws_ecef[np.newaxis, :],
+            ws_vel[np.newaxis, :]
+        )
+        target_dec = target_dec[0]
+        target_caz = target_caz[0]
+
+        # Find Starlink satellites at this time
+        starlink_sats = starlink_traj_df[
+            starlink_traj_df['times'] == obs_time
+        ]
+
+        n_visible_starlinks = len(starlink_sats)
+        if t_idx == 0:
+            print(f"    Visible Starlink satellites at first time step: {n_visible_starlinks}")
+
+        # Process each frequency channel
+        for f_idx, freq in enumerate(freq_channels):
+            starlink_interference_temp = 0.0
+            starlink_reflection_interference_temp = 0.0
+            ground_emitter_interference_temp = 0.0
+
+            # Process each Starlink satellite (same as phase2)
+            if n_visible_starlinks > 0:
+                for _, sat_row in starlink_sats.iterrows():
+                    # Get Starlink position from trajectory
+                    sat_dist = sat_row['distances']
+                    sat_elev = np.deg2rad(sat_row['elevations'])
+                    sat_azim = np.deg2rad(sat_row['azimuths'])
+
+                    # Convert Starlink position to ECEF (from observer)
+                    observer_ecef = latlonalt_to_ecef(observer_lat, observer_lon, observer_alt)
+
+                    # Convert spherical coordinates (elev, azim, dist) to local ENU
+                    e = sat_dist * np.sin(sat_elev) * np.sin(sat_azim)  # East
+                    n = sat_dist * np.sin(sat_elev) * np.cos(sat_azim)  # North
+                    u = sat_dist * np.cos(sat_elev)  # Up
+
+                    # Convert ENU to ECEF
+                    obs_lat_rad = np.deg2rad(observer_lat)
+                    obs_lon_rad = np.deg2rad(observer_lon)
+
+                    # Rotation matrix from ENU to ECEF
+                    R_enu_to_ecef = np.array([
+                        [-np.sin(obs_lon_rad), -np.sin(obs_lat_rad) * np.cos(obs_lon_rad),
+                         np.cos(obs_lat_rad) * np.cos(obs_lon_rad)],
+                        [np.cos(obs_lon_rad), -np.sin(obs_lat_rad) * np.sin(obs_lon_rad),
+                         np.cos(obs_lat_rad) * np.sin(obs_lon_rad)],
+                        [0, np.cos(obs_lat_rad), np.sin(obs_lat_rad)]
+                    ])
+
+                    enu_vec = np.array([e, n, u])
+                    sat_ecef = R_enu_to_ecef @ enu_vec + observer_ecef
+
+                    # Transform Starlink to weather satellite frame
+                    sat_dec, sat_caz = ecef_to_weather_sat_frame(
+                        sat_ecef[np.newaxis, :],
+                        ws_ecef[np.newaxis, :],
+                        ws_vel[np.newaxis, :]
+                    )
+                    sat_dec = sat_dec[0]
+                    sat_caz = sat_caz[0]
+
+                    # Calculate actual distance from weather satellite to Starlink
+                    sat_to_ws_vec = sat_ecef - ws_ecef
+                    sat_to_ws_dist = np.linalg.norm(sat_to_ws_vec)
+
+                    # Calculate link budget (includes polarization mismatch loss and harmonics)
+                    link_budget = starlink_backlobe_to_weather_sat_link_budget(
+                        0.0, 0.0,  # Weather sat pointing at nadir
+                        weather_sat_antenna,
+                        sat_dec, sat_caz,
+                        sat_to_ws_dist,
+                        starlink_antenna,
+                        freq,
+                        polarization_loss_factor=polarization_loss_factor,
+                        starlink_fundamental_freq=starlink_fundamental_freq,
+                        harmonics=harmonics,
+                        observation_bandwidth=bandwidth
+                    )
+
+                    # Starlink transmit power (convert to temperature)
+                    starlink_power_w = 10**(starlink_eirp_dbw / 10.0)
+                    starlink_temp = power_to_temperature(starlink_power_w, bandwidth)
+
+                    # Interference temperature
+                    interference_temp = link_budget * starlink_temp
+                    starlink_interference_temp += interference_temp
+
+                    # Ground reflection (if enabled)
+                    if include_ground_reflection:
+                        # Calculate direct path distance for diagnostic
+                        sat_to_ws_dist_direct = np.linalg.norm(sat_ecef - ws_ecef)
+
+                        reflection_link_budget, reflection_diagnostics = (
+                            starlink_ground_reflection_to_weather_sat_link_budget(
+                                sat_ecef,
+                                ws_ecef,
+                                weather_sat_antenna,
+                                starlink_antenna,
+                                freq,
+                                starlink_fundamental_freq=starlink_fundamental_freq,
+                                harmonics=harmonics,
+                                observation_bandwidth=bandwidth,
+                                surface_type=surface_type,
+                                polarization_loss_factor=polarization_loss_factor,
+                                include_atmospheric_loss=include_atmospheric_loss,
+                                use_enhanced_atmospheric=use_enhanced_atmospheric,
+                                temperature=temperature,
+                                pressure=pressure,
+                                humidity=humidity,
+                                return_diagnostics=True
+                            )
+                        )
+
+                        # Diagnostic output (first time step, first frequency, first satellite)
+                        first_sat_check = (t_idx == 0 and f_idx == 0 and len(starlink_sats) > 0 and
+                                           sat_row.name == starlink_sats.index[0])
+                        if first_sat_check:
+                            if reflection_diagnostics is not None:
+                                print("      Ground reflection diagnostics (first Starlink, first time step):")
+                                print(f"        Reflection point valid: {reflection_diagnostics['valid']}")
+                                if reflection_diagnostics['valid']:
+                                    print(f"        Starlink angle from nadir to reflection: "
+                                          f"{reflection_diagnostics['starlink_angle_from_nadir']:.2f}°")
+                                    print(f"        Incidence angle at reflection point: "
+                                          f"{reflection_diagnostics['incidence_angle']:.2f}°")
+                                    print(f"        Path length (Starlink → reflection): "
+                                          f"{reflection_diagnostics['path_starlink']/1e3:.2f} km")
+                                    print(f"        Path length (reflection → weather sat): "
+                                          f"{reflection_diagnostics['path_weather_sat']/1e3:.2f} km")
+                                    total_reflected_path = (
+                                        reflection_diagnostics['path_starlink'] +
+                                        reflection_diagnostics['path_weather_sat']
+                                    )
+                                    print(f"        Total reflected path: "
+                                          f"{total_reflected_path/1e3:.2f} km")
+                                    print(f"        Direct path (Starlink → weather sat): "
+                                          f"{sat_to_ws_dist_direct/1e3:.2f} km")
+                                    total_reflected = (reflection_diagnostics['path_starlink'] +
+                                                       reflection_diagnostics['path_weather_sat'])
+                                    path_ratio = total_reflected / sat_to_ws_dist_direct
+                                    print(f"        Path length ratio (reflected/direct): {path_ratio:.3f}")
+                                    refl_coeff = reflection_diagnostics['reflection_coeff']
+                                    refl_coeff_db = (10*np.log10(refl_coeff)
+                                                     if refl_coeff > 0 else -np.inf)
+                                    print(f"        Reflection coefficient: "
+                                          f"{reflection_diagnostics['reflection_coeff']:.4f} "
+                                          f"({refl_coeff_db:.2f} dB)")
+                                    gain_starlink_db = (10*np.log10(reflection_diagnostics['gain_starlink'])
+                                                        if reflection_diagnostics['gain_starlink'] > 0 else -np.inf)
+                                    gain_ws_db = (10*np.log10(reflection_diagnostics['gain_weather_sat'])
+                                                  if reflection_diagnostics['gain_weather_sat'] > 0 else -np.inf)
+                                    print(f"        Starlink gain toward reflection: "
+                                          f"{gain_starlink_db:.2f} dBi")
+                                    print(f"        Weather sat gain at reflection point: "
+                                          f"{gain_ws_db:.2f} dBi")
+                                else:
+                                    print("        No valid reflection point found")
+
+                        reflection_interference_temp = reflection_link_budget * starlink_temp
+                        starlink_reflection_interference_temp += reflection_interference_temp
+
+            # Process ground emitters (Phase 3: enhanced atmospheric model)
+            if ground_emitters is not None and ground_emitter_antenna is not None:
+                # Pre-cache terrain elevations for all emitters (once per emitter, reused across time steps)
+                if t_idx == 0:
+                    # Cache terrain elevations for all emitters (only compute once)
+                    n_emitters = len(ground_emitters)
+                    emitter_terrain_elevations = np.zeros(n_emitters)
+                    if dem_masker is not None and dem_masker.dem_data is not None:
+                        for i, (_, emitter_row) in enumerate(ground_emitters.iterrows()):
+                            terrain_elev = dem_masker.get_terrain_elevation(
+                                emitter_row['lat'],
+                                emitter_row['lon']
+                            )
+                            if terrain_elev is not None:
+                                emitter_terrain_elevations[i] = terrain_elev
+                    # Store in ground_emitters DataFrame for reuse
+                    ground_emitters['terrain_elev'] = emitter_terrain_elevations
+                else:
+                    # Retrieve cached terrain elevations
+                    emitter_terrain_elevations = ground_emitters['terrain_elev'].values
+
+                # Vectorized processing: convert all emitter positions to ECEF at once
+                emitter_lats = ground_emitters['lat'].values
+                emitter_lons = ground_emitters['lon'].values
+                emitter_alts_above_ground = ground_emitters['alt'].values
+                emitter_total_alts = emitter_terrain_elevations + emitter_alts_above_ground
+                emitter_ecef_all = latlonalt_to_ecef_vectorized(
+                    emitter_lats, emitter_lons, emitter_total_alts
+                )
+                # Ensure emitter_ecef_all has shape [n_emitters, 3]
+                emitter_ecef_all = np.asarray(emitter_ecef_all, dtype=np.float64)
+                if emitter_ecef_all.ndim == 1:
+                    emitter_ecef_all = emitter_ecef_all.reshape(1, 3)
+                elif emitter_ecef_all.ndim == 2 and emitter_ecef_all.shape[1] != 3:
+                    emitter_ecef_all = emitter_ecef_all.reshape(-1, 3)
+
+                # Vectorized visibility check (same as phase2)
+                n_emitters = len(ground_emitters)
+                visibility_mask = np.ones(n_emitters, dtype=bool)
+
+                if enable_terrain_masking:
+                    # Stage 1: Vectorized geometric horizon check for all emitters
+                    ws_vec = np.asarray(ws_ecef, dtype=np.float64).flatten()
+                    if len(ws_vec) != 3:
+                        raise ValueError(f"ws_ecef must have 3 elements, got {len(ws_vec)}")
+                    ws_vec = ws_vec.reshape(1, 3)
+                    ws_distance = float(np.linalg.norm(ws_vec))
+
+                    emitter_vecs = np.asarray(emitter_ecef_all, dtype=np.float64)
+                    if emitter_vecs.ndim == 1:
+                        if len(emitter_vecs) == 3:
+                            emitter_vecs = emitter_vecs.reshape(1, 3)
+                        else:
+                            emitter_vecs = emitter_vecs.reshape(-1, 3)
+                    elif emitter_vecs.ndim == 2:
+                        if emitter_vecs.shape[1] != 3:
+                            emitter_vecs = emitter_vecs.reshape(-1, 3)
+
+                    sat_to_emitter_vecs = emitter_vecs - ws_vec
+                    if sat_to_emitter_vecs.ndim == 1:
+                        sat_to_emitter_vecs = sat_to_emitter_vecs.reshape(1, 3)
+                    elif sat_to_emitter_vecs.ndim == 2 and sat_to_emitter_vecs.shape[1] != 3:
+                        sat_to_emitter_vecs = sat_to_emitter_vecs.reshape(-1, 3)
+                    sat_to_emitter_vecs = np.ascontiguousarray(sat_to_emitter_vecs)
+                    sat_to_emitter_dists = np.linalg.norm(sat_to_emitter_vecs, axis=1)
+
+                    dot_products = np.sum(-ws_vec * sat_to_emitter_vecs, axis=1)
+                    cos_angles = dot_products / (ws_distance * sat_to_emitter_dists)
+                    cos_angles = np.clip(cos_angles, -1.0, 1.0)
+                    angles = np.arccos(cos_angles)
+
+                    sin_horizon_angle = R_earth / ws_distance
+                    horizon_angle = np.arcsin(np.clip(sin_horizon_angle, 0.0, 1.0))
+
+                    visibility_mask = angles < horizon_angle
+                    n_geometric_visible = np.sum(visibility_mask)
+
+                    # Stage 2: DEM ray tracing only for emitters that passed geometric check
+                    n_dem_checked = 0
+                    n_dem_blocked = 0
+                    n_high_elevation = 0
+
+                    if dem_masker is not None and dem_masker.dem_data is not None:
+                        visible_indices = np.where(visibility_mask)[0]
+                        if len(visible_indices) > 0:
+                            visible_angles_deg = np.rad2deg(angles[visible_indices])
+                            elevation_angles_deg = 90.0 - visible_angles_deg
+
+                            high_elevation_threshold_deg = 30.0
+                            high_elevation_mask = elevation_angles_deg > high_elevation_threshold_deg
+                            n_high_elevation = np.sum(high_elevation_mask)
+
+                            low_elevation_indices = visible_indices[~high_elevation_mask]
+                            n_dem_checked = len(low_elevation_indices)
+
+                            for i in low_elevation_indices:
+                                if not dem_masker.check_line_of_sight_dem(
+                                    emitter_ecef_all[i],
+                                    ws_ecef,
+                                    emitter_alts_above_ground[i],
+                                    num_points=10
+                                ):
+                                    visibility_mask[i] = False
+                                    n_dem_blocked += 1
+                else:
+                    n_geometric_visible = n_emitters
+                    n_dem_checked = 0
+                    n_dem_blocked = 0
+                    n_high_elevation = 0
+
+                # Print detailed visibility statistics at first time step
+                if t_idx == 0:
+                    print("    Ground emitter visibility statistics (first time step):")
+                    print(f"      Total emitters: {len(ground_emitters)}")
+                    if enable_terrain_masking:
+                        print(f"      Geometric horizon check: {n_geometric_visible}/{len(ground_emitters)} passed")
+                        if dem_masker is not None and dem_masker.dem_data is not None:
+                            print(f"      High elevation (>30°): {n_high_elevation} (skipped DEM ray tracing)")
+                            print(f"      DEM ray tracing checked: {n_dem_checked}")
+                            print(f"      Terrain-masked (blocked): {n_dem_blocked}")
+                        else:
+                            print("      DEM not available - using geometric check only")
+                    else:
+                        print("      Terrain masking disabled - all emitters assumed visible")
+
+                # Filter to visible emitters only
+                visible_indices = np.where(visibility_mask)[0]
+                n_visible_emitters = len(visible_indices)
+
+                if t_idx == 0:
+                    print(f"      Final visible: {n_visible_emitters}/{len(ground_emitters)}")
+
+                if n_visible_emitters > 0:
+                    # Calculate elevation angles for diagnostic output (first time step, first frequency only)
+                    if t_idx == 0 and f_idx == 0:
+                        # Calculate elevation angles for all visible emitters
+                        emitter_ecef_visible_diag = emitter_ecef_all[visible_indices]
+                        n_visible_diag = len(visible_indices)
+                        if emitter_ecef_visible_diag.ndim == 1:
+                            emitter_ecef_visible_diag = emitter_ecef_visible_diag.reshape(1, 3)
+                        elif emitter_ecef_visible_diag.ndim == 2 and emitter_ecef_visible_diag.shape[1] != 3:
+                            emitter_ecef_visible_diag = emitter_ecef_visible_diag.reshape(n_visible_diag, 3)
+                        emitter_ecef_visible_diag = np.ascontiguousarray(
+                            emitter_ecef_visible_diag.astype(np.float64)
+                        )
+                        weather_sat_velocity_ecef_diag = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+                        ws_ecef_array_diag = np.asarray(ws_ecef, dtype=np.float64).reshape(1, 3)
+                        emitter_decs_diag, _ = ecef_to_weather_sat_frame(
+                            emitter_ecef_visible_diag,
+                            np.tile(ws_ecef_array_diag, (n_visible_diag, 1)),
+                            np.tile(weather_sat_velocity_ecef_diag.reshape(1, 3), (n_visible_diag, 1))
+                        )
+                        # Elevation from ground emitter perspective: elevation = π/2 - dec
+                        # (dec is angle from nadir in weather sat frame: 0 = nadir, π/2 = horizon)
+                        elevation_angles_diag_deg = np.rad2deg(np.pi / 2 - emitter_decs_diag)
+                        print("      Ground emitter elevation angles (from ground, first time step):")
+                        print(f"        Min: {np.min(elevation_angles_diag_deg):.2f}°")
+                        print(f"        Max: {np.max(elevation_angles_diag_deg):.2f}°")
+                        print(f"        Mean: {np.mean(elevation_angles_diag_deg):.2f}°")
+                        print(f"        Median: {np.median(elevation_angles_diag_deg):.2f}°")
+                        print(f"        Std: {np.std(elevation_angles_diag_deg):.2f}°")
+                        # Count emitters in different elevation ranges
+                        n_low_elev = np.sum(elevation_angles_diag_deg < 10.0)
+                        n_med_elev = np.sum(
+                            (elevation_angles_diag_deg >= 10.0) &
+                            (elevation_angles_diag_deg < 30.0)
+                        )
+                        n_high_elev = np.sum(elevation_angles_diag_deg >= 30.0)
+                        print("        Distribution:")
+                        print(f"          < 10° (low): {n_low_elev} emitters "
+                              f"({100*n_low_elev/n_visible_emitters:.1f}%)")
+                        print(f"          10-30° (medium): {n_med_elev} emitters "
+                              f"({100*n_med_elev/n_visible_emitters:.1f}%)")
+                        print(f"          ≥ 30° (high): {n_high_elev} emitters "
+                              f"({100*n_high_elev/n_visible_emitters:.1f}%)")
+
+                    # Vectorized coordinate transformation for visible emitters
+                    emitter_ecef_visible = emitter_ecef_all[visible_indices]
+                    n_visible = len(visible_indices)
+
+                    if emitter_ecef_visible.ndim == 1:
+                        emitter_ecef_visible = emitter_ecef_visible.reshape(n_visible, 3)
+                    elif emitter_ecef_visible.ndim == 2 and emitter_ecef_visible.shape[1] != 3:
+                        emitter_ecef_visible = emitter_ecef_visible.reshape(n_visible, 3)
+                    emitter_ecef_visible = np.ascontiguousarray(
+                        emitter_ecef_visible.astype(np.float64)
+                    )
+
+                    # Vectorized link budget calculation
+                    weather_sat_velocity_ecef = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+                    ws_ecef_array = np.asarray(ws_ecef, dtype=np.float64).reshape(1, 3)
+
+                    emitter_decs, emitter_cazs = ecef_to_weather_sat_frame(
+                        emitter_ecef_visible,
+                        np.tile(ws_ecef_array, (n_visible, 1)),
+                        np.tile(weather_sat_velocity_ecef.reshape(1, 3), (n_visible, 1))
+                    )
+
+                    # Calculate distances (vectorized)
+                    sat_to_emitter_vecs = emitter_ecef_visible - ws_ecef_array
+                    sat_to_emitter_dists = np.linalg.norm(sat_to_emitter_vecs, axis=1)
+
+                    # Vectorized antenna gain calculations
+                    gain_weather_sat_visible = weather_sat_antenna.get_gain_values(
+                        emitter_decs, emitter_cazs
+                    )
+
+                    # Get valid angle ranges for emitter antenna
+                    valid_alphas, valid_betas = ground_emitter_antenna.get_def_angles()
+                    alpha_min_deg, alpha_max_deg = valid_alphas.min(), valid_alphas.max()
+                    beta_min_deg, beta_max_deg = valid_betas.min(), valid_betas.max()
+                    alpha_min_rad = np.deg2rad(alpha_min_deg)
+                    alpha_max_rad = np.deg2rad(alpha_max_deg)
+                    beta_min_rad = np.deg2rad(beta_min_deg)
+                    beta_max_rad = np.deg2rad(beta_max_deg)
+
+                    # Clamp angles for emitter antenna (vectorized)
+                    emitter_alphas_rad = np.clip(emitter_decs, alpha_min_rad, alpha_max_rad)
+                    emitter_betas_rad = emitter_cazs % (2 * np.pi)
+                    emitter_betas_rad = np.where(
+                        emitter_betas_rad < 0,
+                        emitter_betas_rad + 2 * np.pi,
+                        emitter_betas_rad
+                    )
+                    if beta_max_deg >= 360.0:
+                        emitter_betas_rad = np.clip(emitter_betas_rad, beta_min_rad, beta_max_rad)
+                    else:
+                        emitter_betas_rad = np.clip(emitter_betas_rad, beta_min_rad, beta_max_rad)
+
+                    # Get emitter antenna gains (vectorized)
+                    gain_emitter_visible_absolute = ground_emitter_antenna.get_gain_values(
+                        emitter_alphas_rad, emitter_betas_rad
+                    )
+                    peak_gain_emitter = ground_emitter_antenna.get_boresight_gain()
+                    gain_emitter_visible = gain_emitter_visible_absolute / peak_gain_emitter
+
+                    # Check if we have fundamental frequency and bandwidth information
+                    if (ground_emitter_fundamental_freq is not None and bandwidth is not None):
+                        # Calculate observation bandwidth bounds
+                        freq_min = freq - bandwidth / 2
+                        freq_max = freq + bandwidth / 2
+
+                        # Calculate base link budget at fundamental frequency
+                        speed_c = 3e8
+                        wavelength_fund = speed_c / ground_emitter_fundamental_freq
+                        L_fs_fund_visible = (4 * np.pi * sat_to_emitter_dists / wavelength_fund) ** 2
+
+                        # Atmospheric loss at fundamental frequency (PHASE 3: enhanced model)
+                        if include_atmospheric_loss:
+                            # Calculate elevation angles from ground emitter perspective
+                            # emitter_alphas_rad: angle from nadir in weather sat frame (0 = nadir, π/2 = horizon)
+                            # For ground emitter looking up: elevation = π/2 - alpha
+                            elevation_angles_deg = np.rad2deg(np.pi / 2 - emitter_alphas_rad)
+
+                            if use_enhanced_atmospheric:
+                                # Phase 3: Use comprehensive atmospheric loss (vectorized)
+                                L_atm_fund_visible = calculate_comprehensive_atmospheric_loss_vectorized(
+                                    sat_to_emitter_dists,
+                                    np.full(n_visible, ground_emitter_fundamental_freq),
+                                    elevation_angles_deg,
+                                    temperature,
+                                    pressure,
+                                    humidity
+                                )
+                            else:
+                                # Phase 2: Use simplified atmospheric loss (vectorized)
+                                freq_ghz_fund = ground_emitter_fundamental_freq / 1e9
+                                if freq_ghz_fund < 20:
+                                    absorption_db_per_km = 0.01
+                                elif freq_ghz_fund < 40:
+                                    absorption_db_per_km = 0.2 + 0.3 * ((freq_ghz_fund - 20) / 20.0)
+                                elif freq_ghz_fund < 60:
+                                    oxygen_band_center = 60.0
+                                    distance_from_peak = abs(freq_ghz_fund - oxygen_band_center)
+                                    if distance_from_peak < 10:
+                                        absorption_db_per_km = 10.0 - 8.0 * (distance_from_peak / 10.0)
+                                    else:
+                                        absorption_db_per_km = 2.0 + 1.0 * ((freq_ghz_fund - 40) / 20.0)
+                                else:
+                                    absorption_db_per_km = 15.0
+
+                                elev_rad = np.deg2rad(elevation_angles_deg)
+                                effective_path_multiplier = 1.0 / np.maximum(np.sin(elev_rad), 0.1)
+                                effective_path_multiplier = np.minimum(effective_path_multiplier, 3.0)
+                                atmospheric_path_km = 25.0
+                                total_loss_db = absorption_db_per_km * atmospheric_path_km * effective_path_multiplier
+                                L_atm_fund_visible = 10 ** (total_loss_db / 10.0)
+                        else:
+                            L_atm_fund_visible = np.ones(n_visible)
+
+                        base_link_budgets = (
+                            gain_weather_sat_visible *
+                            (1.0 / L_fs_fund_visible) *
+                            (1.0 / L_atm_fund_visible) *
+                            gain_emitter_visible
+                        )
+
+                        # Check if fundamental falls within observation bandwidth
+                        fundamental_in_band = (freq_min <= ground_emitter_fundamental_freq <= freq_max)
+                        if fundamental_in_band:
+                            link_budgets = base_link_budgets
+                        else:
+                            link_budgets = np.zeros(n_visible)
+
+                        # Add harmonic contributions if harmonics are provided
+                        if ground_emitter_harmonics is not None:
+                            L_fundamental = L_fs_fund_visible
+                            harmonic_contributions = np.zeros(n_visible)
+
+                            for freq_mult, power_red in ground_emitter_harmonics:
+                                harmonic_frequency = ground_emitter_fundamental_freq * freq_mult
+
+                                # Check if harmonic falls within observation band
+                                if freq_min <= harmonic_frequency <= freq_max:
+                                    # Calculate path loss at harmonic frequency
+                                    wavelength_harm = speed_c / harmonic_frequency
+                                    L_harmonic = (4 * np.pi * sat_to_emitter_dists / wavelength_harm) ** 2
+
+                                    # Atmospheric loss at harmonic frequency (PHASE 3: enhanced model)
+                                    if include_atmospheric_loss:
+                                        if use_enhanced_atmospheric:
+                                            # Phase 3: Use comprehensive atmospheric loss (vectorized)
+                                            L_atm_harm = calculate_comprehensive_atmospheric_loss_vectorized(
+                                                sat_to_emitter_dists,
+                                                np.full(n_visible, harmonic_frequency),
+                                                elevation_angles_deg,
+                                                temperature,
+                                                pressure,
+                                                humidity
+                                            )
+                                        else:
+                                            # Phase 2: Use simplified atmospheric loss (vectorized)
+                                            freq_ghz_harm = harmonic_frequency / 1e9
+                                            if freq_ghz_harm < 20:
+                                                absorption_db_per_km = 0.01
+                                            elif freq_ghz_harm < 40:
+                                                absorption_db_per_km = 0.2 + 0.3 * ((freq_ghz_harm - 20) / 20.0)
+                                            elif freq_ghz_harm < 60:
+                                                oxygen_band_center = 60.0
+                                                distance_from_peak = abs(freq_ghz_harm - oxygen_band_center)
+                                                if distance_from_peak < 10:
+                                                    absorption_db_per_km = 10.0 - 8.0 * (distance_from_peak / 10.0)
+                                                else:
+                                                    absorption_db_per_km = 2.0 + 1.0 * ((freq_ghz_harm - 40) / 20.0)
+                                            else:
+                                                absorption_db_per_km = 15.0
+
+                                            elev_rad = np.deg2rad(elevation_angles_deg)
+                                            effective_path_multiplier = 1.0 / np.maximum(np.sin(elev_rad), 0.1)
+                                            effective_path_multiplier = np.minimum(
+                                                effective_path_multiplier, 3.0)
+                                            atmospheric_path_km = 25.0
+                                            total_loss_db = (absorption_db_per_km *
+                                                             atmospheric_path_km *
+                                                             effective_path_multiplier)
+                                            L_atm_harm = 10 ** (total_loss_db / 10.0)
+                                    else:
+                                        L_atm_harm = np.ones(n_visible)
+
+                                    # Path loss ratio (fundamental vs harmonic)
+                                    path_loss_ratio = L_fundamental / L_harmonic
+
+                                    # Harmonic link budget contribution
+                                    harmonic_link_budgets = (
+                                        base_link_budgets *
+                                        power_red *
+                                        path_loss_ratio *
+                                        (L_atm_fund_visible / L_atm_harm)  # Atmospheric loss ratio
+                                    )
+                                    harmonic_contributions += harmonic_link_budgets
+
+                            # Add harmonic contribution
+                            link_budgets += harmonic_contributions
+
+                        # Add OOBE contribution if OOBE parameters are provided
+                        if (ground_emitter_oobe_suppression_db is not None and
+                                ground_emitter_oobe_freq_offset_max is not None):
+                            fundamental_in_band = (freq_min <= ground_emitter_fundamental_freq <= freq_max)
+
+                            if not fundamental_in_band:
+                                # Calculate frequency offset from observation band
+                                if ground_emitter_fundamental_freq < freq_min:
+                                    freq_offset = freq_min - ground_emitter_fundamental_freq
+                                else:
+                                    freq_offset = ground_emitter_fundamental_freq - freq_max
+
+                                # Check if within OOBE range
+                                if freq_offset <= ground_emitter_oobe_freq_offset_max:
+                                    # Calculate path loss at observation frequency
+                                    wavelength_obs = speed_c / freq
+                                    L_fs_obs = (4 * np.pi * sat_to_emitter_dists / wavelength_obs) ** 2
+
+                                    # Atmospheric loss at observation frequency (PHASE 3: enhanced model)
+                                    if include_atmospheric_loss:
+                                        if use_enhanced_atmospheric:
+                                            # Phase 3: Use comprehensive atmospheric loss (vectorized)
+                                            L_atm_obs = calculate_comprehensive_atmospheric_loss_vectorized(
+                                                sat_to_emitter_dists,
+                                                np.full(n_visible, freq),
+                                                elevation_angles_deg,
+                                                temperature,
+                                                pressure,
+                                                humidity
+                                            )
+                                        else:
+                                            # Phase 2: Use simplified atmospheric loss (vectorized)
+                                            freq_ghz_obs = freq / 1e9
+                                            if freq_ghz_obs < 20:
+                                                absorption_db_per_km = 0.01
+                                            elif freq_ghz_obs < 40:
+                                                absorption_db_per_km = 0.2 + 0.3 * ((freq_ghz_obs - 20) / 20.0)
+                                            elif freq_ghz_obs < 60:
+                                                oxygen_band_center = 60.0
+                                                distance_from_peak = abs(freq_ghz_obs - oxygen_band_center)
+                                                if distance_from_peak < 10:
+                                                    absorption_db_per_km = 10.0 - 8.0 * (distance_from_peak / 10.0)
+                                                else:
+                                                    absorption_db_per_km = 2.0 + 1.0 * ((freq_ghz_obs - 40) / 20.0)
+                                            else:
+                                                absorption_db_per_km = 15.0
+
+                                            elev_rad = np.deg2rad(elevation_angles_deg)
+                                            effective_path_multiplier = 1.0 / np.maximum(np.sin(elev_rad), 0.1)
+                                            effective_path_multiplier = np.minimum(
+                                                effective_path_multiplier, 3.0)
+                                            atmospheric_path_km = 25.0
+                                            total_loss_db = (absorption_db_per_km *
+                                                             atmospheric_path_km *
+                                                             effective_path_multiplier)
+                                            L_atm_obs = 10 ** (total_loss_db / 10.0)
+                                    else:
+                                        L_atm_obs = np.ones(n_visible)
+
+                                    # OOBE link budget accounts for:
+                                    # 1. OOBE suppression factor
+                                    # 2. Path loss ratio (observation vs fundamental)
+                                    # 3. Atmospheric loss ratio (observation vs fundamental)
+                                    path_loss_ratio = L_fs_fund_visible / L_fs_obs
+                                    atm_loss_ratio = L_atm_fund_visible / L_atm_obs
+                                    oobe_suppression_linear = 10 ** (ground_emitter_oobe_suppression_db / 10.0)
+
+                                    # Calculate OOBE contribution
+                                    oobe_link_budgets = (
+                                        base_link_budgets *
+                                        oobe_suppression_linear *
+                                        path_loss_ratio *
+                                        atm_loss_ratio
+                                    )
+
+                                    # Add OOBE contribution
+                                    link_budgets += oobe_link_budgets
+                    else:
+                        # No fundamental frequency info: calculate base link budget at observation frequency
+                        # Vectorized free-space path loss
+                        speed_c = 3e8
+                        wavelength = speed_c / freq
+                        L_fs_visible = (4 * np.pi * sat_to_emitter_dists / wavelength) ** 2
+
+                        # Vectorized atmospheric loss (PHASE 3: enhanced model)
+                        if include_atmospheric_loss:
+                            elevation_angles_deg = np.rad2deg(np.pi / 2 - emitter_alphas_rad)
+
+                            if use_enhanced_atmospheric:
+                                # Phase 3: Use comprehensive atmospheric loss (vectorized)
+                                L_atm_visible = calculate_comprehensive_atmospheric_loss_vectorized(
+                                    sat_to_emitter_dists,
+                                    np.full(n_visible, freq),
+                                    elevation_angles_deg,
+                                    temperature,
+                                    pressure,
+                                    humidity
+                                )
+                            else:
+                                # Phase 2: Use simplified atmospheric loss (vectorized)
+                                freq_ghz = freq / 1e9
+                                if freq_ghz < 20:
+                                    absorption_db_per_km = 0.01
+                                elif freq_ghz < 40:
+                                    absorption_db_per_km = 0.2 + 0.3 * ((freq_ghz - 20) / 20.0)
+                                elif freq_ghz < 60:
+                                    oxygen_band_center = 60.0
+                                    distance_from_peak = abs(freq_ghz - oxygen_band_center)
+                                    if distance_from_peak < 10:
+                                        absorption_db_per_km = 10.0 - 8.0 * (distance_from_peak / 10.0)
+                                    else:
+                                        absorption_db_per_km = 2.0 + 1.0 * ((freq_ghz - 40) / 20.0)
+                                else:
+                                    absorption_db_per_km = 15.0
+
+                                elev_rad = np.deg2rad(elevation_angles_deg)
+                                effective_path_multiplier = 1.0 / np.maximum(np.sin(elev_rad), 0.1)
+                                effective_path_multiplier = np.minimum(effective_path_multiplier, 3.0)
+                                atmospheric_path_km = 25.0
+                                total_loss_db = absorption_db_per_km * atmospheric_path_km * effective_path_multiplier
+                                L_atm_visible = 10 ** (total_loss_db / 10.0)
+                        else:
+                            L_atm_visible = np.ones(n_visible)
+
+                        # Vectorized link budget calculation
+                        link_budgets = (
+                            gain_weather_sat_visible *
+                            (1.0 / L_fs_visible) *
+                            (1.0 / L_atm_visible) *
+                            gain_emitter_visible
+                        )
+
+                    # Ground emitter transmit power (convert to temperature)
+                    emitter_power_w = 10**(ground_emitter_eirp_dbw / 10.0)
+                    emitter_temp = power_to_temperature(emitter_power_w, bandwidth)
+
+                    # Vectorized interference temperature
+                    interference_temps = link_budgets * emitter_temp
+                    ground_emitter_interference_temp = np.sum(interference_temps)
+                else:
+                    # No visible emitters
+                    ground_emitter_interference_temp = 0.0
+
+            # Convert interference to power
+            starlink_power = temperature_to_power(starlink_interference_temp, bandwidth)
+            starlink_reflection_power = temperature_to_power(
+                starlink_reflection_interference_temp, bandwidth
+            )
+            ground_emitter_power = temperature_to_power(ground_emitter_interference_temp, bandwidth)
+
+            # Earth brightness (through main lobe pointing at target)
+            earth_temp_freq = calculate_earth_brightness_temperature(freq, earth_brightness_temp)
+            earth_gain = weather_sat_antenna.get_gain_value(target_dec, target_caz)
+            earth_power = temperature_to_power(earth_temp_freq, bandwidth) * earth_gain
+
+            # Sky background (through sidelobes - use average gain)
+            sky_power = temperature_to_power(sky_brightness_temp, bandwidth) * 0.1
+
+            # System noise
+            system_power = temperature_to_power(system_temp, bandwidth)
+
+            # Store individual components
+            result_starlink[t_idx, f_idx] = starlink_power
+            result_starlink_reflection[t_idx, f_idx] = starlink_reflection_power
+            result_ground_emitter[t_idx, f_idx] = ground_emitter_power
+            result_earth[t_idx, f_idx] = earth_power
+            result_sky[t_idx, f_idx] = sky_power
+            result_system[t_idx, f_idx] = system_power
+
+            # Total power
+            result_power[t_idx, f_idx] = (
+                starlink_power + starlink_reflection_power + ground_emitter_power +
+                earth_power + sky_power + system_power
+            )
+
+    # Convert to dBW
+    result_power_dbw = 10 * np.log10(result_power + 1e-100)
+    result_starlink_dbw = 10 * np.log10(result_starlink + 1e-100)
+    result_starlink_reflection_dbw = 10 * np.log10(result_starlink_reflection + 1e-100)
+    result_ground_emitter_dbw = 10 * np.log10(result_ground_emitter + 1e-100)
+    result_earth_dbw = 10 * np.log10(result_earth + 1e-100)
+    result_sky_dbw = 10 * np.log10(result_sky + 1e-100)
+    result_system_dbw = 10 * np.log10(result_system + 1e-100)
+
+    # Return dictionary with total and individual components
+    return {
+        'total': result_power_dbw,
+        'starlink': result_starlink_dbw,
+        'starlink_reflection': result_starlink_reflection_dbw,
         'ground_emitter': result_ground_emitter_dbw,
         'earth': result_earth_dbw,
         'sky': result_sky_dbw,
