@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "RSC-SIM"
-version = "1.10.0"
-description = "A Python framework for radio observation modeling and simulation"
+version = "1.11.0"
+description = "A Python framework for radio observation and weather satellite RFI modeling and simulation"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Radio Astronomy",
+    "Topic :: Scientific/Engineering :: Weather Satellite",
 ]
 requires-python = ">=3.9"
 dependencies = [
@@ -35,6 +36,9 @@ dependencies = [
     "sgp4>=2.0.0",
     "rasterio>=1.3.0",
     "ipykernel>=6.0.0",
+    "netCDF4>=1.7.0",
+    "reverse-geocoder>=1.5.0",
+    "requests>=2.32.0",
 ]
 
 [project.optional-dependencies]

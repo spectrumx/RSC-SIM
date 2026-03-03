@@ -24,46 +24,61 @@ The Python implementation is organized as follows:
   python tuto_radiomdl_direct.py --direct STARLINK-5322
   ```
 
-- **`tuto_radiomdl_weather_phase1.py`**: Phase 1 weather satellite RFI modeling tutorial for simulating interference from Starlink satellite backlobe and sidelobe emissions to weather satellites (e.g., Suomi-NPP) in a "looking-down" observation scenario. This tutorial demonstrates:
-  - Coordinate transformations to weather satellite body frame (nadir, along-track, cross-track)
-  - Suomi-NPP Weather satellite antenna pattern loading from CSV files (K-Band 23.8 GHz and V-Band 50.3 GHz)
-  - Starlink backlobe/sidelobe interference modeling using ITU antenna patterns
-  - Link budget calculations for space-to-space interference paths
-  - Harmonic effects from Starlink fundamental frequency affecting observation bands
-  - Earth brightness temperature and sky background modeling
-  - See `tuto_radiomdl_weather_phase1_input_parameters.md` for detailed parameter documentation
-
-- **`tuto_radiomdl_weather_phase2.py`**: Phase 2 weather satellite RFI modeling tutorial that extends Phase 1 with ground-based 5G emitter interference modeling. This comprehensive tutorial includes:
-  - All Phase 1 capabilities (Starlink backlobe interference, weather satellite modeling)
-  - 5G ground emitter distribution modeling with configurable density (emitters/km²)
-  - Two deployment scenarios:
-    - **Suburban (Mid-Band)**: 3.5 GHz (n78 band) with 7th/14th harmonics affecting K/V-bands
-    - **Urban (High-Band/mmWave)**: 25.15 GHz (n258 band) with 2nd harmonic affecting V-band
-  - 5G sector antenna pattern modeling (configurable gain, beamwidth)
-  - Ground emitter link budget with atmospheric absorption losses
-  - Terrain masking and horizon visibility checks using DEM data
-  - Out-of-band emission (OOBE) modeling for frequencies near observation bands
-  - Harmonic interference analysis for both Starlink and ground emitters
-  - Polarization mismatch loss modeling (Starlink circular vs. Suomi-NPP linear)
-  - Comprehensive visualization: antenna patterns, emitter distribution, satellite positions, RFI power components
-  - See `tuto_radiomdl_weather_phase2_input_parameters.md` for detailed parameter documentation
-
-- **`tuto_radiomdl_weather_phase3.py`**: Phase 3 weather satellite RFI modeling tutorial that extends Phase 2 with enhanced atmospheric effects modeling. This advanced tutorial includes:
-  - All Phase 1 and Phase 2 capabilities (Starlink backlobe, ground emitter interference)
-  - Comprehensive atmospheric absorption modeling using full ITU-R P.676 standard:
-    - Separate oxygen and water vapor absorption components
-    - Temperature, pressure, and humidity-dependent calculations
-    - Frequency-dependent attenuation (especially important for V-band at 50.3 GHz)
-  - Atmospheric refraction effects (optional, configurable)
-  - Ground reflection modeling with configurable surface properties
-  - Enhanced link budget calculations with path-integrated atmospheric losses
-  - Detailed atmospheric attenuation breakdown visualization
-  - Cached atmospheric calculator for improved computational performance
-  - See `tuto_radiomdl_weather_phase3_input_parameters.md` for detailed parameter documentation
-
-- **Data directory**: `research_tutorials/data/` - Contains input data files
+- **Data directory**: `research_tutorials/data/` — Contains input data files. See **Data Files** below.
 
 - **Data creation directory**: `research_tutorials/data_creation/` - Contains scripts to generate input data files, .arrow, which are for getting trajectories of a star and a satellite with user-specified date and time. Currently, Cas A (Cassiopeia A) and Starlink satellite are used
+
+- **TLE utilities directory**: `research_tutorials/util/` - Generate timestamp and ECEF (Earth Center, Earth Fixed) lookup CSVs from netCDF-4 sensor observation files (.nc4) and [Space-Track](https://www.space-track.org/) TLE data.
+
+
+### Weather satellite RFI modeling: two streams
+
+- **Phase 1–3 tutorials** (`tuto_radiomdl_weather_phase1.py`, `_phase2.py`, `_phase3.py`): Target a **single field of view (FOV) / footprint** or a **certain area of interest**. They demonstrate Starlink backlobe/sidelobe interference, 5G ground emitters, atmospheric effects (ITU-R P.676), and terrain masking in a "looking-down" scenario. Used for understanding link budget and physics over one FOV or a local region.
+
+  - **`tuto_radiomdl_weather_phase1.py`**: Phase 1 weather satellite RFI modeling tutorial for simulating interference from Starlink satellite backlobe and sidelobe emissions to weather satellites (e.g., Suomi-NPP) in a "looking-down" observation scenario. This tutorial demonstrates:
+    - Coordinate transformations to weather satellite body frame (nadir, along-track, cross-track)
+    - Suomi-NPP Weather satellite antenna pattern loading from CSV files (K-Band 23.8 GHz and V-Band 50.3 GHz)
+    - Starlink backlobe/sidelobe interference modeling using ITU antenna patterns
+    - Link budget calculations for space-to-space interference paths
+    - Harmonic effects from Starlink fundamental frequency affecting observation bands
+    - Earth brightness temperature and sky background modeling
+    - See `tuto_radiomdl_weather_phase1_input_parameters.md` for detailed parameter documentation
+
+  - **`tuto_radiomdl_weather_phase2.py`**: Phase 2 weather satellite RFI modeling tutorial that extends Phase 1 with ground-based 5G emitter interference modeling. This comprehensive tutorial includes:
+    - All Phase 1 capabilities (Starlink backlobe interference, weather satellite modeling)
+    - 5G ground emitter distribution modeling with configurable density (emitters/km²)
+    - Two deployment scenarios:
+      - **Suburban (Mid-Band)**: 3.5 GHz (n78 band) with 7th/14th harmonics affecting K/V-bands
+      - **Urban (High-Band/mmWave)**: 25.15 GHz (n258 band) with 2nd harmonic affecting V-band
+    - 5G sector antenna pattern modeling (configurable gain, beamwidth)
+    - Ground emitter link budget with atmospheric absorption losses
+    - Terrain masking and horizon visibility checks using DEM data
+    - Out-of-band emission (OOBE) modeling for frequencies near observation bands
+    - Harmonic interference analysis for both Starlink and ground emitters
+    - Polarization mismatch loss modeling (Starlink circular vs. Suomi-NPP linear)
+    - Comprehensive visualization: antenna patterns, emitter distribution, satellite positions, RFI power components
+    - See `tuto_radiomdl_weather_phase2_input_parameters.md` for detailed parameter documentation
+
+  - **`tuto_radiomdl_weather_phase3.py`**: Phase 3 weather satellite RFI modeling tutorial that extends Phase 2 with enhanced atmospheric effects modeling. This advanced tutorial includes:
+    - All Phase 1 and Phase 2 capabilities (Starlink backlobe, ground emitter interference)
+    - Comprehensive atmospheric absorption modeling using full ITU-R P.676 standard:
+      - Separate oxygen and water vapor absorption components
+      - Temperature, pressure, and humidity-dependent calculations
+      - Frequency-dependent attenuation (especially important for V-band at 50.3 GHz)
+    - Atmospheric refraction effects (optional, configurable)
+    - Ground reflection modeling with configurable surface properties
+    - Enhanced link budget calculations with path-integrated atmospheric losses
+    - Detailed atmospheric attenuation breakdown visualization
+    - Cached atmospheric calculator for improved computational performance
+    - See `tuto_radiomdl_weather_phase3_input_parameters.md` for detailed parameter documentation
+
+- **RFI modeling for NWP simulation** (`ATMS_RFI_modeling.py`, `AMSU-A_RFI_modeling.py`, `SSMI-S_RFI_modeling.py`): Designed for **numerical weather prediction (NWP) simulation** over full sensor scans. They read netCDF-4 observation files (many FOVs per file), use ECEF lookups and `src/weather_sat_nwp.py` to compute 5G ground-emitter RFI (dBW and brightness temperature) for every FOV, then combine per-channel CSVs. Batch scripts run all nc4 files in a satellite directory. See `README_RFI_modeling_for_NWP_simulation.md` for the procedure; TLE utilities in `util/` are documented in `util/README_TLE01_TLE02_TLE03.md`.
+
+  - **`ATMS_RFI_modeling.py`**: RFI modeling for ATMS sensor on the SUOMI-NPP and JPSS-1 (NOAA-20) weather satellites
+
+  - **`AMSU-A_RFI_modeling.py`**: RFI modeling for AMSU-A sensor on the NOAA-15, NOAA-18, NOAA-19, METOP-B, and METOP-C weather satellites
+
+  - **`SSMI-S_RFI_modeling.py`**: RFI modeling for SSMI-S sensor on the DMSP-F17 weather satellite
 
 
 ### Data Files
@@ -77,11 +92,17 @@ The `research_tutorials/data/` directory contains input data files of simulation
 - **CSV files** (Phase 1 Weather Satellite RFI Modeling):
   - `K-Band 23.8 GHz absolute antenna pattern.csv`: Suomi-NPP ATMS K-Band antenna gain pattern (elevation angle vs. power in dB)
   - `V-Band 50.3 GHz absolute antenna pattern.csv`: Suomi-NPP ATMS V-Band antenna gain pattern (elevation angle vs. power in dB)
-- One **.tif** file: DEM (Digital Elevation Model) GeoTIFF file for terrain analysis and environmental effects modeling: area around MIT Westford antenna (USGS_OPR_MA_CentralEastern_2021_B21_be_19TBH294720.tif)
+- **GeoTIFF files**:
+  - **DEM**: `USGS_OPR_MA_CentralEastern_2021_B21_be_19TBH294720.tif` — Digital Elevation Model for terrain analysis and environmental effects (area around MIT Westford antenna; see [USGS 1 meter DEMs](https://data.usgs.gov/datacatalog/data/USGS:77ae0551-c61e-4979-aedd-d797abdcde0e)).
+  - **GHSL population data (GHS-POP)** for RFI modeling for NWP simulations: Please download `GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif` from EU [Global Human Settlement Layer (GHSL)](https://human-settlement.emergency.copernicus.eu/download.php?ds=pop) for Epoch: 2025, Resolution: 30 arcsec (~1 km²), and Coordinate system: WGS84. Used for 5G ground emitter density in ATMS/AMSU-A/SSMI-S RFI scripts.
 - **Markdown documentation**:
   - `tuto_radiomdl_weather_phase1_input_parameters.md`: Comprehensive documentation of input parameters for Phase 1 weather satellite RFI modeling, including trajectory file generation instructions
   - `tuto_radiomdl_weather_phase2_input_parameters.md`: Comprehensive documentation of input parameters for Phase 2 weather satellite RFI modeling, including ground emitter configuration
   - `tuto_radiomdl_weather_phase3_input_parameters.md`: Comprehensive documentation of input parameters for Phase 3 weather satellite RFI modeling, including enhanced atmospheric modeling (ITU-R P.676) and ground reflection effects
+  - `README_RFI_modeling_for_NWP_simulation.md`: Procedure to run 5G ground-emitter RFI estimation for ATMS, AMSU-A, and SSMI-S sensors: data preparation (ECEF lookups via TLE01–TLE03 in `util/`), running single-nc4 or batch processing, and combining per-channel CSVs
+  - `Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md`: Reference for expert tuning of input parameters (EIRP, antenna pattern, channel frequency/bandwidth, emitter density, etc.) used by the three RFI modeling scripts for NWP simulations
+
+The `research_tutorials/util/data/` directory contains TLE data of weather satellites such as SUOMI-NPP, JPSS-1, NOAA-15, NOAA-18, NOAA-19, METOP-B, METOP-C, and DMSP-F17, which were obtained through [Space-Track](https://www.space-track.org/) for a date range from 2023-08-01 to 2023-11-01 for RFI modeling for NWP simulations. These TLE data are used to identify weather satellite's ECEF coordinate at each timestamp in the sensor observation data files (.nc4).
 
 
 ### Data Creation Scripts
@@ -120,3 +141,13 @@ The Python implementation can be used through:
 - Features include: oxygen/water vapor absorption, atmospheric refraction, ground reflection modeling
 - Outputs include: all Phase 2 outputs plus atmospheric attenuation breakdown plots
 - Refer to `tuto_radiomdl_weather_phase3_input_parameters.md` for detailed parameter descriptions
+
+**RFI modeling for NWP simulations (ATMS, AMSU-A, and SSMI-S sensors):**
+- **Scripts** (process one nc4 file per run; require ECEF lookup CSVs from `util/` TLE01–TLE03 pipeline):
+  - `ATMS_RFI_modeling.py`: 5G RFI (dBW and brightness temperature) for ATMS sensor on SUOMI-NPP and JPSS-1. Run from `research_tutorials/`; nc4 and lookups live under `util/JPSS-1/`, `util/SUOMI-NPP/`.
+  - `AMSU-A_RFI_modeling.py`: Same for AMSU-A on NOAA-15, NOAA-18, NOAA-19, METOP-B, METOP-C. nc4 and lookups under `util/NOAA-15/`, etc.
+  - `SSMI-S_RFI_modeling.py`: Same for SSMI-S on DMSP-F17. nc4 and lookups under `util/DMSP-F17/`.
+- **Batch runs** (run all nc4 files in the corresponding satellite directory):
+  - **Windows:** `run_rfi_atms_batch.bat`, `run_rfi_amsua_batch.bat`, `run_rfi_ssmis_batch.bat` for ATMS, AMSU-A, and SSMI-S sensors, respectively.
+  - **macOS/Linux:** `run_rfi_atms_batch.sh`, `run_rfi_amsua_batch.sh`, `run_rfi_ssmis_batch.sh` for ATMS, AMSU-A, and SSMI-S sensors, respectively.
+- See [README_RFI_modeling_for_NWP_simulation.md](README_RFI_modeling_for_NWP_simulation.md) for data preparation, paths, and the combine step; [Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md](Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md) for parameter tuning.
