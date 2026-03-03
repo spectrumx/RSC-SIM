@@ -31,8 +31,8 @@ from pathlib import Path
 import requests
 
 # Space-Track.org account credentials: please register an account and use your own credentials
-USERNAME = 'dkwon@nd.edu'
-PASSWORD = 'space_tracking_dk_260215!'
+USERNAME = ''
+PASSWORD = ''
 
 # Satellite NORAD IDs (name -> ID lookup uses uppercase for -sat)
 NORAD_ID_TO_NAME = {
