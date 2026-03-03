@@ -22,7 +22,8 @@ In addition, RSC-SIM supports **weather satellite RFI modeling** from Starlink s
 - `radio_types.py`: Radio data types
 - `sat_mdl.py`: Satellite modeling
 - `env_mdl.py`: Environment effects modeling
-- `weather_sat_mdl.py`: Weather satellite RFI modeling
+- `weather_sat_mdl.py`: Weather satellite RFI modeling for a single field of view (FOV) / footprint
+- `weather_sat_nwp.py`: Weather satellite RFI modeling for numerical weather prediction (NWP) simulation
 - `attenuation_mdl.py`: Atmospheric absorption/attenuation modeling
 
 ## Tutorial Resources
@@ -35,9 +36,12 @@ This directory contains a series of focused, educational tutorials for learning 
 
 This contains additional learning resources and examples and serves as a reference implementation for the modeling and simulation of radio astronomy observations. It consists of Jupyter Notebooks and their CLI scripts, and also includes data creation scripts for trajectory files of a star and satellite at the `research_tutorials/data_creation/` directory.
 
-This directory also has weather satellite RFI modeling tutorials (`tuto_radiomdl_weather_phase1.py, _phase2.py, and _phase3.py`) for a "looking-down" observation scenario (Phase 1, 2, and 3).
+**Weather satellite RFI modeling** is available in two forms:
 
-Details can be found at the `README.md` inside the `research_tutorials/` directory.
+- **Phase 1–3 tutorials** (`tuto_radiomdl_weather_phase1.py`, `_phase2.py`, `_phase3.py`): Focus on a **single field of view (FOV) / footprint** or a **certain area of interest** in a "looking-down" scenario (Starlink backlobe, 5G ground emitters, atmospheric effects).
+- **RFI modeling for NWP simulation** (`ATMS_RFI_modeling.py`, `AMSU-A_RFI_modeling.py`, `SSMI-S_RFI_modeling.py`): Designed for **numerical weather prediction (NWP) simulation** over full sensor scans using netCDF-4 sensor observation files.
+
+Details can be found at the `research_tutorials/README.md`.
 
 ## Installation
 
