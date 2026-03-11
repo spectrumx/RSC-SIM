@@ -90,8 +90,9 @@ The `research_tutorials/data/` directory contains input data files of simulation
     - `Starlink_trajectory_Westford_2025-11-01T07_45_00.000_2025-11-01T08_45_00.000.arrow`: Starlink constellation trajectory for weather satellite RFI analysis
     - `jpss_trajectory_Westford_2025-11-01T07_45_00.000_2025-11-01T08_45_00.000.arrow`: JPSS (Suomi-NPP) weather satellite trajectory
 - **CSV files** (Phase 1 Weather Satellite RFI Modeling):
-  - `K-Band 23.8 GHz absolute antenna pattern.csv`: Suomi-NPP ATMS K-Band antenna gain pattern (elevation angle vs. power in dB)
-  - `V-Band 50.3 GHz absolute antenna pattern.csv`: Suomi-NPP ATMS V-Band antenna gain pattern (elevation angle vs. power in dB)
+  - `K-Band 23.8 GHz absolute antenna pattern.csv`: ATMS sensor's K-Band antenna gain pattern (elevation angle vs. absolute power in dB)
+  - `V-Band 50.3 GHz absolute antenna pattern.csv`: ATMS sensor's V-Band antenna gain pattern (elevation angle vs. absolute power in dB)
+  - `AMSU-A V-Band 50.3 GHz absolute antenna pattern.csv`: AMSU-A sensor's V-Band antenna gain pattern (elevation angle vs. absolute power in dB)
 - **GeoTIFF files**:
   - **DEM**: `USGS_OPR_MA_CentralEastern_2021_B21_be_19TBH294720.tif` — Digital Elevation Model for terrain analysis and environmental effects (area around MIT Westford antenna; see [USGS 1 meter DEMs](https://data.usgs.gov/datacatalog/data/USGS:77ae0551-c61e-4979-aedd-d797abdcde0e)).
   - **GHSL population data (GHS-POP)** for RFI modeling for NWP simulations: Please download `GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif` from EU [Global Human Settlement Layer (GHSL)](https://human-settlement.emergency.copernicus.eu/download.php?ds=pop) for Epoch: 2025, Resolution: 30 arcsec (~1 km²), and Coordinate system: WGS84. Used for 5G ground emitter density in ATMS/AMSU-A/SSMI-S RFI scripts.
@@ -99,7 +100,7 @@ The `research_tutorials/data/` directory contains input data files of simulation
   - `tuto_radiomdl_weather_phase1_input_parameters.md`: Comprehensive documentation of input parameters for Phase 1 weather satellite RFI modeling, including trajectory file generation instructions
   - `tuto_radiomdl_weather_phase2_input_parameters.md`: Comprehensive documentation of input parameters for Phase 2 weather satellite RFI modeling, including ground emitter configuration
   - `tuto_radiomdl_weather_phase3_input_parameters.md`: Comprehensive documentation of input parameters for Phase 3 weather satellite RFI modeling, including enhanced atmospheric modeling (ITU-R P.676) and ground reflection effects
-  - `README_RFI_modeling_for_NWP_simulation.md`: Procedure to run 5G ground-emitter RFI estimation for ATMS, AMSU-A, and SSMI-S sensors: data preparation (ECEF lookups via TLE01–TLE03 in `util/`), running single-nc4 or batch processing, and combining per-channel CSVs
+  - `README_RFI_modeling_for_NWP_simulation.md`: Procedure to run 5G ground-emitter RFI estimation for ATMS, AMSU-A, and SSMI-S sensors: data preparation (ECEF lookups via TLE01–TLE03 in `util/`), running single-nc4 or batch processing including parallel processing, and combining per-channel CSVs
   - `Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md`: Reference for expert tuning of input parameters (EIRP, antenna pattern, channel frequency/bandwidth, emitter density, etc.) used by the three RFI modeling scripts for NWP simulations
 
 The `research_tutorials/util/data/` directory contains TLE data of weather satellites such as SUOMI-NPP, JPSS-1, NOAA-15, NOAA-18, NOAA-19, METOP-B, METOP-C, and DMSP-F17, which were obtained through [Space-Track](https://www.space-track.org/) for a date range from 2023-08-01 to 2023-11-01 for RFI modeling for NWP simulations. These TLE data are used to identify weather satellite's ECEF coordinate at each timestamp in the sensor observation data files (.nc4).
@@ -150,4 +151,6 @@ The Python implementation can be used through:
 - **Batch runs** (run all nc4 files in the corresponding satellite directory):
   - **Windows:** `run_rfi_atms_batch.bat`, `run_rfi_amsua_batch.bat`, `run_rfi_ssmis_batch.bat` for ATMS, AMSU-A, and SSMI-S sensors, respectively.
   - **macOS/Linux:** `run_rfi_atms_batch.sh`, `run_rfi_amsua_batch.sh`, `run_rfi_ssmis_batch.sh` for ATMS, AMSU-A, and SSMI-S sensors, respectively.
+- **Parallel processing batch runs** (run all nc4 files in the corresponding satellite directory in parallel):
+  - `run_rfi_atms_batch.py`, `run_rfi_amsua_batch.py`, `run_rfi_ssmis_batch.py` for ATMS, AMSU-A, and SSMI-S sensors, respectively. This is cross-platform (Windows, macOS, Linux).
 - See [README_RFI_modeling_for_NWP_simulation.md](README_RFI_modeling_for_NWP_simulation.md) for data preparation, paths, and the combine step; [Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md](Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md) for parameter tuning.

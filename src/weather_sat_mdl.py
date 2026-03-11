@@ -56,10 +56,36 @@ def ecef_to_weather_sat_frame(
     """
     Transform target position from ECEF to weather satellite body frame.
 
-    Weather satellite frame:
+    Weather satellite body frame (origin at satellite):
     - X (nadir): Points toward Earth center
     - Y (along-track): Points in velocity direction
-    - Z (cross-track): Completes right-handed system
+    - Z (cross-track): Completes right-handed system (Z = X × Y)
+
+    Direction to a target (e.g. 5G ground emitter) from the satellite is given by
+    spherical angles (dec, caz) in this frame:
+    - dec: Declination from nadir (angle from X); 0 = nadir, π/2 = horizon
+    - caz: Counter-azimuth in the Y-Z plane; 0 = along-track (+Y), increases
+      counter-clockwise when viewed from +X (i.e. from satellite toward Earth)
+
+    Diagram (schematic; X = nadir into page at origin, Y = along-track, Z = cross-track):
+
+                Y (along-track)
+                |
+                |    * target (e.g. 5G ground emitter)
+                |   /
+                |  /  dec (angle from nadir X)
+                | /
+                |/
+                +---------------- Y
+               /|
+              / |
+             Z  X (nadir, toward Earth; into page)
+         (cross-track)
+             caz = angle in Y-Z plane from +Y toward +Z (counter-clockwise about X)
+
+    So the 5G ground emitter has no separate local frame in this model: its
+    position is in ECEF, and the direction satellite → emitter is expressed
+    in the weather satellite body frame as (dec, caz).
 
     Args:
         target_ecef: Target position in ECEF [x, y, z] (meters) or (N, 3) array
@@ -69,7 +95,7 @@ def ecef_to_weather_sat_frame(
     Returns:
         tuple: (dec, caz) in radians
             - dec: Declination angle from nadir (0 = nadir, π/2 = horizon)
-            - caz: Counter-azimuth angle (0 = along-track, counter-clockwise)
+            - caz: Counter-azimuth angle (0 = along-track, counter-clockwise in Y-Z plane)
     """
     # Ensure arrays are at least 2D and have correct dtype
     target_ecef = np.asarray(target_ecef, dtype=np.float64)
@@ -144,7 +170,7 @@ def ecef_to_weather_sat_frame(
     # dec: angle from nadir (x-axis)
     dec = np.arccos(np.clip(x_proj.flatten(), -1.0, 1.0))
 
-    # caz: counter-azimuth (angle from y-axis in x-y plane)
+    # caz: counter-azimuth (angle from y-axis in Y-Z plane)
     # Handle edge cases
     rho = np.sqrt(y_proj.flatten()**2 + z_proj.flatten()**2)
     caz = np.where(
@@ -753,8 +779,21 @@ def compute_weather_sat_ecef_from_trajectory(
     """
     Compute weather satellite ECEF positions and velocities from trajectory.
 
-    Trajectory contains elevation, azimuth, distance from observer.
-    We convert these to ECEF coordinates.
+    Ground (observer) frame: East-North-Up (ENU) at observer position.
+    - East (E), North (N), Up (U = local zenith).
+    - Trajectory columns: 'elevations', 'azimuths', 'distances'.
+
+    Angle convention used in this conversion:
+    - Trajectory 'elevations': treated as altitude above horizon (0° = horizon,
+      90° = zenith), e.g. from Skyfield altaz(). Converted internally to polar
+      from zenith (0° = zenith, 90° = horizon) for ENU: polar = 90° - altitude.
+    - Trajectory 'azimuths': from North clockwise, 0° = North, 90° = East
+      (standard geodetic / Skyfield convention).
+
+    N-W-Z (North-West-Zenith) vs ENU: This routine uses ENU. In N-W-Z, polar from
+    Zenith is the same; counter-azimuth (from North toward West) relates to
+    azimuth (from North toward East) by azimuth = 360° - co_azimuth (or
+    co_azimuth = 360° - azimuth), depending on sign convention.
 
     Args:
         trajectory: Weather satellite trajectory
@@ -776,7 +815,11 @@ def compute_weather_sat_ecef_from_trajectory(
     ecef_velocities = np.zeros((n_points, 3))
 
     for i, row in traj_df.iterrows():
-        elev_rad = np.deg2rad(row['elevations'])
+        # Trajectory typically stores altitude above horizon (e.g. Skyfield altaz);
+        # ENU formula uses polar angle from zenith (0=zenith, 90=horizon).
+        alt_above_horizon_deg = row['elevations']
+        polar_from_zenith_deg = 90.0 - alt_above_horizon_deg
+        elev_rad = np.deg2rad(polar_from_zenith_deg)
         azim_rad = np.deg2rad(row['azimuths'])
         dist = row['distances']
 
@@ -965,16 +1008,16 @@ def model_weather_sat_observed_power(
             if n_visible_starlinks > 0:
                 for _, sat_row in starlink_sats.iterrows():
                     # Get Starlink position from trajectory
-                    # For now, use spherical coordinates relative to observer
-                    # In practice, would compute Starlink ECEF from trajectory
                     sat_dist = sat_row['distances']
-                    sat_elev = np.deg2rad(sat_row['elevations'])
+                    # Trajectory 'elevations' = altitude above horizon; ENU uses polar from zenith
+                    sat_polar_zenith_deg = 90.0 - sat_row['elevations']
+                    sat_elev = np.deg2rad(sat_polar_zenith_deg)
                     sat_azim = np.deg2rad(sat_row['azimuths'])
 
                     # Convert Starlink position to ECEF (from observer)
                     observer_ecef = latlonalt_to_ecef(observer_lat, observer_lon, observer_alt)
 
-                    # Convert spherical coordinates (elev, azim, dist) to local ENU
+                    # Convert spherical coordinates (polar from zenith, azim, dist) to local ENU
                     e = sat_dist * np.sin(sat_elev) * np.sin(sat_azim)  # East
                     n = sat_dist * np.sin(sat_elev) * np.cos(sat_azim)  # North
                     u = sat_dist * np.cos(sat_elev)  # Up
@@ -2182,7 +2225,9 @@ def model_weather_sat_observed_power_phase2(
                 for _, sat_row in starlink_sats.iterrows():
                     # Get Starlink position from trajectory
                     sat_dist = sat_row['distances']
-                    sat_elev = np.deg2rad(sat_row['elevations'])
+                    # Trajectory 'elevations' = altitude above horizon; ENU uses polar from zenith
+                    sat_polar_zenith_deg = 90.0 - sat_row['elevations']
+                    sat_elev = np.deg2rad(sat_polar_zenith_deg)
                     sat_azim = np.deg2rad(sat_row['azimuths'])
 
                     # Convert Starlink position to ECEF (from observer)
@@ -4081,7 +4126,9 @@ def model_weather_sat_observed_power_phase3(
                 for _, sat_row in starlink_sats.iterrows():
                     # Get Starlink position from trajectory
                     sat_dist = sat_row['distances']
-                    sat_elev = np.deg2rad(sat_row['elevations'])
+                    # Trajectory 'elevations' = altitude above horizon; ENU uses polar from zenith
+                    sat_polar_zenith_deg = 90.0 - sat_row['elevations']
+                    sat_elev = np.deg2rad(sat_polar_zenith_deg)
                     sat_azim = np.deg2rad(sat_row['azimuths'])
 
                     # Convert Starlink position to ECEF (from observer)

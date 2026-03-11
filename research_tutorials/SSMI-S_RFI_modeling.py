@@ -1,19 +1,19 @@
 """
-RFI modeling for SSMI-S/DMSP-F17 for NWP data biasing.
+RFI modeling for SSMI-S for NWP data biasing.
 
-Computes 5G ground-emitter RFI (no Starlink) for all FOVs in SSMI-S netCDF-4 files,
-using ECEF lookup for satellite position per timestamp. Runs a parametric study
-over SSMI-S channels 1–5: one output CSV per channel, with emitter fundamental set
-so the 2nd harmonic falls at each channel center frequency.
+Computes 5G ground-emitter RFI for all FOVs in SSMI-S netCDF-4 files. Each nc4 can
+contain data from multiple satellites (DMSP-F17, DMSP-F18); only SAID 285 (DMSP-F17)
+is processed—other SAIDs get RFI set to zero. ECEF lookups are loaded from the
+sensor directory. Runs a parametric study over SSMI-S channels 1–5.
 
 Outputs RFI in dBW and brightness temperature (K). Full ITU-R P.676 atmospheric
 absorption; no polarization loss, terrain masking, or OOBE.
 
 Usage:
-  python SSMI-S_RFI_modeling.py --sat SATELLITE --nc4 path --ecef path --out_dir dir
+  python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 path [--out_dir dir]
   e.g.:
-  python SSMI-S_RFI_modeling.py --sat DMSP-F17 --nc4 util/DMSP-F17/ssmis_2023080112.nc4 --ecef util/DMSP-F17/DMSP-F17_ECEF_lookup_ssmis_2023080112.csv --out_dir util/DMSP-F17
-  Output: <out_dir>/<satellite>_<nc4_basename>_5G_RFI_chN.csv (no SAZA column).
+  python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 util/SSMI-S/ssmis_2023080112.nc4 --out_dir util/SSMI-S
+  Output: <out_dir>/<nc4_stem>_5G_RFI_chN.csv (timestamp, satellite, lat, lon, rfi_dBW, rfi_Tb; no SAZA).
 
 Author: Weather Satellite RFI / NWP Team
 """  # noqa: E501
@@ -39,8 +39,12 @@ from weather_sat_mdl import (  # noqa: E402
 from weather_sat_nwp import (  # noqa: E402
     combine_channel_csvs,
     get_emitter_density_vectorized,
-    load_ecef_lookup,
+    iter_valid_ts_sat_indices,
+    load_ecef_lookups_for_nc4,
     model_rfi_nwp_5g_single_time_ssmis,
+    said_to_satellite_array,
+    SENSOR_ALLOWED_SAIDS,
+    SENSOR_SAID_TO_SATELLITE,
     timestamp_from_nc4_vars,
 )
 
@@ -97,6 +101,8 @@ VAR_DAYS = "DAYS"
 VAR_HOUR = "HOUR"
 VAR_MINU = "MINUTE"
 VAR_SECO = "SECOND"
+VAR_SAID = "SAID"
+SENSOR_NAME = "SSMI-S"
 
 # SSMI-S geometry (DMSP-F17): altitude 850 km, slant range 1020 km, elevation 36.9 deg
 SSMIS_ALTITUDE_M = 850_000.0
@@ -124,8 +130,8 @@ def _flatten_or_repeat_time(var, n_fov_per_scan: int):
 
 def load_ssmis_nc4_and_build_arrays(nc4_path: str):
     """
-    Load SSMI-S nc4 (LAT, LON, time only; no SAZA, BEARAZ, HMSL).
-    Return flat arrays: lat, lon, altitude_m (constant), timestamps, n_obs, time vars.
+    Load SSMI-S nc4 (LAT, LON, time; SAID if present). Return flat arrays: lat, lon,
+    altitude_m (constant), timestamps, satellite (per obs), n_obs. Only SAID 285 (DMSP-F17) is used for RFI.
     """
     with Dataset(nc4_path, "r") as ds:
         lat = _read_nc4_var(ds, VAR_LAT)
@@ -136,6 +142,7 @@ def load_ssmis_nc4_and_build_arrays(nc4_path: str):
         hour = _read_nc4_var(ds, VAR_HOUR)
         minu = _read_nc4_var(ds, VAR_MINU)
         seco = _read_nc4_var(ds, VAR_SECO)
+        said = _read_nc4_var(ds, VAR_SAID) if VAR_SAID in ds.variables else None
 
     if lat.ndim == 2:
         n_scan, n_fov = lat.shape
@@ -148,6 +155,8 @@ def load_ssmis_nc4_and_build_arrays(nc4_path: str):
         hour = _flatten_or_repeat_time(hour, n_fov)
         minu = _flatten_or_repeat_time(minu, n_fov)
         seco = _flatten_or_repeat_time(seco, n_fov)
+        if said is not None:
+            said = _flatten_or_repeat_time(said, n_fov)
     else:
         n_obs = int(lat.size)
         lat = np.atleast_1d(lat).ravel()
@@ -158,8 +167,14 @@ def load_ssmis_nc4_and_build_arrays(nc4_path: str):
         hour = np.resize(np.atleast_1d(hour).ravel(), n_obs)
         minu = np.resize(np.atleast_1d(minu).ravel(), n_obs)
         seco = np.resize(np.atleast_1d(seco).ravel(), n_obs)
+        if said is not None:
+            said = np.resize(np.atleast_1d(said).ravel(), n_obs)
 
     timestamps = timestamp_from_nc4_vars(year, month, days, hour, minu, seco)
+    if said is not None:
+        satellite = said_to_satellite_array(said, SENSOR_NAME)
+    else:
+        satellite = np.array([""] * n_obs, dtype=object)
     return {
         "lat": lat,
         "lon": lon,
@@ -171,6 +186,7 @@ def load_ssmis_nc4_and_build_arrays(nc4_path: str):
         "minu": minu,
         "seco": seco,
         "timestamps": timestamps,
+        "satellite": satellite,
         "n_obs": n_obs,
     }
 
@@ -178,7 +194,7 @@ def load_ssmis_nc4_and_build_arrays(nc4_path: str):
 def run_rfi_for_channel_ssmis(
     data: dict,
     density: np.ndarray,
-    ecef_lookup: dict,
+    ecef_by_satellite: dict,
     v_band_antenna,
     emitter_antenna,
     channel_num: int,
@@ -187,27 +203,26 @@ def run_rfi_for_channel_ssmis(
     emitter_fundamental_hz: float,
     out_csv: str,
 ):
-    """Run RFI model for one SSMI-S channel; write CSV (no SAZA)."""
+    """Run RFI model for one SSMI-S channel; write CSV with timestamp, satellite, lat, lon, rfi_dBW, rfi_Tb (no SAZA). Only SAID 285 (DMSP-F17) computed; others set to zero."""  # noqa: E501
     lat = data["lat"]
     lon = data["lon"]
     timestamps = data["timestamps"]
+    satellite = data["satellite"]
     n_obs = data["n_obs"]
-    unique_ts = np.unique(timestamps)
+    allowed = set(SENSOR_SAID_TO_SATELLITE[SENSOR_NAME][said] for said in SENSOR_ALLOWED_SAIDS[SENSOR_NAME])
 
-    rfi_dBW = np.full(n_obs, np.nan)
-    rfi_K = np.full(n_obs, np.nan)
+    rfi_dBW = np.full(n_obs, -300.0)
+    rfi_K = np.full(n_obs, 0.0)
 
-    for ts in unique_ts:
-        coords = ecef_lookup.get(ts)
-        if coords is None:
-            continue
+    for ts, sat, idx, coords in iter_valid_ts_sat_indices(
+        timestamps, satellite, allowed, ecef_by_satellite
+    ):
         sat_ecef_km = np.array(coords, dtype=np.float64)
-        mask = timestamps == ts
         rfi_db, rfi_tb = model_rfi_nwp_5g_single_time_ssmis(
             sat_ecef_km,
-            lat[mask],
-            lon[mask],
-            density[mask],
+            lat[idx],
+            lon[idx],
+            density[idx],
             v_band_antenna,
             emitter_antenna,
             freq_hz=center_freq_hz,
@@ -220,12 +235,13 @@ def run_rfi_for_channel_ssmis(
             slant_range_km=SSMIS_SLANT_RANGE_KM,
             elevation_deg=SSMIS_ELEVATION_DEG,
         )
-        rfi_dBW[mask] = rfi_db
-        rfi_K[mask] = rfi_tb
+        rfi_dBW[idx] = rfi_db
+        rfi_K[idx] = rfi_tb
 
     import pandas as pd
     df = pd.DataFrame({
         "timestamp": timestamps,
+        "satellite": satellite,
         "lat": np.round(lat, 6),
         "lon": np.round(lon, 6),
         "rfi_power_dBW": np.round(rfi_dBW, 3),
@@ -239,39 +255,38 @@ def run_rfi_for_channel_ssmis(
 def main():
     t_start = time_module.perf_counter()
     parser = argparse.ArgumentParser(
-        description="SSMI-S/DMSP-F17 RFI modeling for NWP (5G ground emitters only)."
+        description="SSMI-S RFI modeling for NWP (5G ground emitters only; only SAID 285/DMSP-F17)."
     )
     parser.add_argument(
-        "--sat",
+        "--sensor",
         required=True,
-        metavar="SATELLITE",
-        help="Satellite name for output filenames (e.g. DMSP-F17).",
+        metavar="SENSOR",
+        help="Sensor name (e.g. SSMI-S); only SAID 285 (DMSP-F17) is processed.",
     )
     parser.add_argument(
         "--nc4",
         required=True,
-        help="Path to SSMI-S netCDF-4 file (e.g. data/ssmis_2023080112.nc4).",
-    )
-    parser.add_argument(
-        "--ecef",
-        required=True,
-        help="Path to DMSP-F17 ECEF lookup CSV (e.g., data/DMSP-F17_ECEF_lookup.csv).",
+        help="Path to SSMI-S netCDF-4 file (e.g. util/SSMI-S/ssmis_2023080112.nc4). ECEF lookups from same dir.",
     )
     parser.add_argument(
         "--out_dir",
-        required=True,
-        help="Output CSV directory path for RFI (dBW and K).",
+        default=None,
+        help="Output directory for RFI CSVs (default: same directory as nc4 file).",
     )
     args = parser.parse_args()
 
     if not os.path.isfile(args.nc4):
         print(f"ERROR: nc4 file not found: {args.nc4}")
         sys.exit(1)
-    if not os.path.isfile(args.ecef):
-        print(f"ERROR: ECEF lookup not found: {args.ecef}")
+    if args.sensor != "SSMI-S":
+        print(f"ERROR: This script is for SSMI-S sensor; got --sensor {args.sensor!r}")
         sys.exit(1)
 
-    ecef_lookup = load_ecef_lookup(args.ecef)
+    ecef_by_satellite = load_ecef_lookups_for_nc4(args.nc4)
+    if not ecef_by_satellite:
+        print(f"ERROR: No ECEF lookup CSVs found for {args.nc4} (expect *_ECEF_lookup_<stem>.csv in same dir)")
+        sys.exit(1)
+    print(f"  Loaded ECEF lookups for satellites: {list(ecef_by_satellite.keys())}")
 
     data_dir = os.path.join(_script_dir, "data")
     v_band_csv = os.path.join(data_dir, "V-Band 50.3 GHz absolute antenna pattern.csv")
@@ -313,12 +328,11 @@ def main():
     density = get_emitter_density_vectorized(data["lat"], data["lon"])
     print(f"  Done in {time_module.perf_counter() - t0:.1f} s")
 
-    out_dir = args.out_dir
+    out_base_nc4 = os.path.splitext(os.path.basename(args.nc4))[0]
+    out_dir = args.out_dir or os.path.dirname(os.path.abspath(args.nc4))
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
-    satellite_name = args.sat.strip().replace(" ", "_")
-    out_base_nc4 = os.path.splitext(os.path.basename(args.nc4))[0]
-    top5_path = os.path.join(out_dir, f"{satellite_name}_{out_base_nc4}_top5.txt")
+    top5_path = os.path.join(out_dir, f"{out_base_nc4}_top5.txt")
     import pandas as pd
     with open(top5_path, "w") as top5_file:
         for idx, (ch_num, center_freq_hz, bandwidth_hz) in enumerate(SSMIS_CHANNEL_CONFIGS):
@@ -328,9 +342,7 @@ def main():
             freq_max = center_freq_hz + bandwidth_hz / 2.0
             harmonic_in_band = freq_min <= harmonic_freq_hz <= freq_max
 
-            out_csv = os.path.join(
-                out_dir, f"{satellite_name}_{out_base_nc4}_5G_RFI_ch{ch_num}.csv"
-            )
+            out_csv = os.path.join(out_dir, f"{out_base_nc4}_5G_RFI_ch{ch_num}.csv")
             print(
                 f"\nChannel {ch_num}: {center_freq_hz/1e9:.2f} GHz, BW={bandwidth_hz/1e6:.0f} MHz, "
                 f"emitter fundamental={emitter_fundamental_hz/1e9:.2f} GHz "
@@ -344,6 +356,7 @@ def main():
                 )
                 df = pd.DataFrame({
                     "timestamp": data["timestamps"],
+                    "satellite": data["satellite"],
                     "lat": np.round(data["lat"], 6),
                     "lon": np.round(data["lon"], 6),
                     "rfi_power_dBW": np.round(np.full(n_obs, -300.0), 3),
@@ -355,7 +368,7 @@ def main():
                 df = run_rfi_for_channel_ssmis(
                     data,
                     density,
-                    ecef_lookup,
+                    ecef_by_satellite,
                     v_band_antenna,
                     emitter_antenna,
                     ch_num,
@@ -375,18 +388,17 @@ def main():
             top5_file.write("  Top 5 by |rfi_brightness_temperature_K|:\n")
             for rank, idx in enumerate(idx_top5, start=1):
                 row = df.loc[idx]
-                line = (f"    [{rank}] lat: {row['lat']}, lon: {row['lon']}, "
-                        f"rfi_power_dBW: {row['rfi_power_dBW']}, "
-                        f"rfi_Tb_K: {row['rfi_brightness_temperature_K']}")
+                line = (f"    [{rank}] satellite: {row['satellite']}, lat: {row['lat']}, lon: {row['lon']}, "
+                        f"rfi_power_dBW: {row['rfi_power_dBW']}, rfi_Tb_K: {row['rfi_brightness_temperature_K']}")
                 print(line)
                 top5_file.write(line + "\n")
 
     print(f"\nTop 5 summary written to {top5_path}")
 
-    # Combine channel CSVs into one CSV. Set remove_channel_files=False to keep the per-channel CSVs.
-    combined_path = combine_channel_csvs(out_dir, satellite_name, out_base_nc4, remove_channel_files=False)
+    # combine channel CSVs: set remove_channel_files=False to keep the channel CSVs
+    combined_path = combine_channel_csvs(out_dir, out_base_nc4, remove_channel_files=True)
     if combined_path is not None:
-        print(f"Combined channel CSVs to {combined_path} (per-channel CSVs removed).")
+        print(f"Combined channel CSVs to {combined_path}.")
 
     elapsed = time_module.perf_counter() - t_start
     print(f"\nOverall execution time: {elapsed:.1f} s")

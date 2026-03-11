@@ -1,23 +1,16 @@
 @echo off
 setlocal enabledelayedexpansion
 if "%~1"=="" (
-  echo Usage: run_rfi_ssmis_batch.bat SATELLITE_DIR
-  echo   e.g. run_rfi_ssmis_batch.bat util\DMSP-F17
+  echo Usage: run_rfi_ssmis_batch.bat SENSOR_DIR
+  echo   e.g. run_rfi_ssmis_batch.bat util\SSMI-S
   exit /b 1
 )
-set "SAT_DIR=%~1"
-for %%A in ("%SAT_DIR%") do set "SAT_NAME=%%~nxA"
+set "SENSOR_DIR=%~1"
 set "SCRIPT=SSMI-S_RFI_modeling.py"
-echo Running SSMI-S RFI for all .nc4 in %SAT_DIR% (satellite: %SAT_NAME%)
-for %%F in ("%SAT_DIR%\*.nc4") do (
+echo Running SSMI-S RFI for all .nc4 in %SENSOR_DIR% (only SAID 285 / DMSP-F17)
+for %%F in ("%SENSOR_DIR%\*.nc4") do (
   set "nc4=%%F"
-  set "stem=%%~nF"
-  set "ecef=%SAT_DIR%\%SAT_NAME%_ECEF_lookup_!stem!.csv"
-  if exist "!ecef!" (
-    echo --- %%~nxF
-    python "%SCRIPT%" --sat %SAT_NAME% --nc4 "!nc4!" --ecef "!ecef!" --out_dir "%SAT_DIR%"
-  ) else (
-    echo Skip %%F: ECEF not found: !ecef!
-  )
+  echo --- %%~nxF
+  python "%SCRIPT%" --sensor SSMI-S --nc4 "!nc4!" --out_dir "%SENSOR_DIR%"
 )
 echo Done.

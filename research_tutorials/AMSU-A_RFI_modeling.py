@@ -1,16 +1,16 @@
 """
 RFI modeling for AMSU-A sensor for NWP data biasing.
 
-Computes 5G ground-emitter RFI (no Starlink) for all FOVs in AMSU-A netCDF-4 files,
-using ECEF lookup for satellite position per timestamp. Runs a parametric study
-over AMSU-A channels 3–8: one output CSV per channel, with emitter fundamental set
-so the 2nd harmonic falls at each channel center frequency.
+Computes 5G ground-emitter RFI for all FOVs in AMSU-A netCDF-4 files. Each nc4 contains
+data from multiple satellites (NOAA-15/18/19, METOP-B/C); SAID identifies the satellite
+per observation. ECEF lookups are loaded per satellite from the sensor directory.
+Runs a parametric study over AMSU-A channels 3–8.
 
 Usage:
-  python AMSU-A_RFI_modeling.py --sat SATELLITE_NAME [--nc4 path] [--ecef path] [--out_dir dir]
+  python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 path [--out_dir dir]
   e.g.:
-  python AMSU-A_RFI_modeling.py --sat NOAA-15 --nc4 util/NOAA-15/amsua_2023080112.nc4 --ecef util/NOAA-15/NOAA-15_ECEF_lookup_amsua_2023080112.csv --out_dir util/NOAA-15
-  Output: <out_dir>/<satellite>_<nc4_basename>_5G_RFI_chN.csv (e.g. NOAA-15_amsua_2023080112_5G_RFI_ch3.csv).
+  python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 util/AMSU-A/amsua_2023080112.nc4 --out_dir util/AMSU-A
+  Output: <out_dir>/<nc4_stem>_5G_RFI_chN.csv (timestamp, satellite, lat, lon, saza, rfi_dBW, rfi_Tb).
 
 Author: Weather Satellite RFI / NWP Team
 """  # noqa: E501
@@ -36,8 +36,12 @@ from weather_sat_mdl import (  # noqa: E402
 from weather_sat_nwp import (  # noqa: E402
     combine_channel_csvs,
     get_emitter_density_vectorized,
-    load_ecef_lookup,
+    iter_valid_ts_sat_indices,
+    load_ecef_lookups_for_nc4,
     model_rfi_nwp_5g_single_time,
+    said_to_satellite_array,
+    SENSOR_ALLOWED_SAIDS,
+    SENSOR_SAID_TO_SATELLITE,
     timestamp_from_nc4_vars,
 )
 
@@ -99,6 +103,8 @@ VAR_DAYS = "DAYS"
 VAR_HOUR = "HOUR"
 VAR_MINU = "MINUTE"
 VAR_SECO = "SECOND"
+VAR_SAID = "SAID"
+SENSOR_NAME = "AMSU-A"
 
 
 def _read_nc4_var(ds, name: str, fallback_name: str = None):
@@ -121,7 +127,7 @@ def _flatten_or_repeat_time(var, n_fov_per_scan: int):
 def load_amsua_nc4_and_build_arrays(nc4_path: str):
     """
     Load AMSU-A nc4 and return flat arrays: lat, lon, saza, bearaz, altitude_m,
-    year, month, day, hour, minute, second, timestamps_str, n_obs.
+    timestamps_str, satellite (per obs), n_obs. SAID mapped via SENSOR_SAID_TO_SATELLITE.
     """
     with Dataset(nc4_path, "r") as ds:
         lat = _read_nc4_var(ds, VAR_LAT)
@@ -135,8 +141,8 @@ def load_amsua_nc4_and_build_arrays(nc4_path: str):
         hour = _read_nc4_var(ds, VAR_HOUR)
         minu = _read_nc4_var(ds, VAR_MINU)
         seco = _read_nc4_var(ds, VAR_SECO)
+        said = _read_nc4_var(ds, VAR_SAID) if VAR_SAID in ds.variables else None
 
-    # Determine shape: (n_scan, n_fov) or (n_obs,)
     if lat.ndim == 2:
         n_scan, n_fov = lat.shape
         n_obs = n_scan * n_fov
@@ -151,6 +157,8 @@ def load_amsua_nc4_and_build_arrays(nc4_path: str):
         hour = _flatten_or_repeat_time(hour, n_fov)
         minu = _flatten_or_repeat_time(minu, n_fov)
         seco = _flatten_or_repeat_time(seco, n_fov)
+        if said is not None:
+            said = _flatten_or_repeat_time(said, n_fov)
     else:
         n_obs = int(lat.size)
         lat = np.atleast_1d(lat).ravel()
@@ -164,10 +172,15 @@ def load_amsua_nc4_and_build_arrays(nc4_path: str):
         hour = np.resize(np.atleast_1d(hour).ravel(), n_obs)
         minu = np.resize(np.atleast_1d(minu).ravel(), n_obs)
         seco = np.resize(np.atleast_1d(seco).ravel(), n_obs)
+        if said is not None:
+            said = np.resize(np.atleast_1d(said).ravel(), n_obs)
 
     timestamps = timestamp_from_nc4_vars(year, month, days, hour, minu, seco)
-    # Altitude: use scalar (typical same for whole file) for model
     altitude_m = float(np.nanmean(alt))
+    if said is not None:
+        satellite = said_to_satellite_array(said, SENSOR_NAME)
+    else:
+        satellite = np.array([""] * n_obs, dtype=object)
     return {
         "lat": lat,
         "lon": lon,
@@ -181,6 +194,7 @@ def load_amsua_nc4_and_build_arrays(nc4_path: str):
         "minu": minu,
         "seco": seco,
         "timestamps": timestamps,
+        "satellite": satellite,
         "n_obs": n_obs,
     }
 
@@ -188,7 +202,7 @@ def load_amsua_nc4_and_build_arrays(nc4_path: str):
 def run_rfi_for_channel(
     data: dict,
     density: np.ndarray,
-    ecef_lookup: dict,
+    ecef_by_satellite: dict,
     v_band_antenna,
     emitter_antenna,
     channel_num: int,
@@ -198,31 +212,30 @@ def run_rfi_for_channel(
     out_csv: str,
     sensor_name: str = "AMSU-A",
 ):
-    # Run RFI model for one AMSU-A channel; write CSV. emitter_fundamental_hz sets 2nd harmonic (e.g. center_freq/2)
+    """Run RFI model for one AMSU-A channel; write CSV with timestamp, satellite, lat, lon, saza, rfi_dBW, rfi_Tb."""
     lat = data["lat"]
     lon = data["lon"]
     saza = data["saza"]
     timestamps = data["timestamps"]
+    satellite = data["satellite"]
     altitude_m = data["altitude_m"]
     n_obs = data["n_obs"]
-    unique_ts = np.unique(timestamps)
+    allowed = set(SENSOR_SAID_TO_SATELLITE[sensor_name][said] for said in SENSOR_ALLOWED_SAIDS[sensor_name])
 
-    rfi_dBW = np.full(n_obs, np.nan)
-    rfi_K = np.full(n_obs, np.nan)
+    rfi_dBW = np.full(n_obs, -300.0)
+    rfi_K = np.full(n_obs, 0.0)
 
-    for ts in unique_ts:
-        coords = ecef_lookup.get(ts)
-        if coords is None:
-            continue
+    for ts, sat, idx, coords in iter_valid_ts_sat_indices(
+        timestamps, satellite, allowed, ecef_by_satellite
+    ):
         sat_ecef_km = np.array(coords, dtype=np.float64)
-        mask = timestamps == ts
         rfi_db, rfi_tb = model_rfi_nwp_5g_single_time(
             sat_ecef_km,
-            lat[mask],
-            lon[mask],
-            saza[mask],
+            lat[idx],
+            lon[idx],
+            saza[idx],
             altitude_m,
-            density[mask],
+            density[idx],
             v_band_antenna,
             emitter_antenna,
             freq_hz=center_freq_hz,
@@ -234,12 +247,13 @@ def run_rfi_for_channel(
             humidity=HUMIDITY_PCT,
             sensor_name=sensor_name,
         )
-        rfi_dBW[mask] = rfi_db
-        rfi_K[mask] = rfi_tb
+        rfi_dBW[idx] = rfi_db
+        rfi_K[idx] = rfi_tb
 
     import pandas as pd
     df = pd.DataFrame({
         "timestamp": timestamps,
+        "satellite": satellite,
         "lat": np.round(lat, 6),
         "lon": np.round(lon, 6),
         "saza": np.round(saza, 6),
@@ -254,42 +268,41 @@ def run_rfi_for_channel(
 def main():
     t_start = time_module.perf_counter()
     parser = argparse.ArgumentParser(
-        description="AMSU-A RFI modeling for NWP (5G ground emitters only)."
+        description="AMSU-A RFI modeling for NWP (5G ground emitters only; multi-satellite per nc4)."
     )
     parser.add_argument(
-        "--sat",
+        "--sensor",
         required=True,
-        metavar="SATELLITE",
-        help="Satellite name for output filenames (e.g. NOAA-15).",
+        metavar="SENSOR",
+        help="Sensor name (e.g. AMSU-A); used for SAID mapping and data directory.",
     )
     parser.add_argument(
         "--nc4",
         required=True,
-        help="Path to AMSU-A netCDF-4 file (default: data/amsua_2023080112.nc4)",
-    )
-    parser.add_argument(
-        "--ecef",
-        required=True,
-        help="Path to AMSU-A satellite ECEF lookup CSV",
+        help="Path to AMSU-A netCDF-4 file (e.g. util/AMSU-A/amsua_2023080112.nc4). ECEF lookups from same dir.",
     )
     parser.add_argument(
         "--out_dir",
-        required=True,
-        help="Output CSV directory path for RFI (dBW and K)",
+        default=None,
+        help="Output directory for RFI CSVs (default: same directory as nc4 file).",
     )
     args = parser.parse_args()
 
     if not os.path.isfile(args.nc4):
         print(f"ERROR: nc4 file not found: {args.nc4}")
         sys.exit(1)
-    if not os.path.isfile(args.ecef):
-        print(f"ERROR: ECEF lookup not found: {args.ecef}")
+    if args.sensor != "AMSU-A":
+        print(f"ERROR: This script is for AMSU-A sensor; got --sensor {args.sensor!r}")
         sys.exit(1)
 
-    ecef_lookup = load_ecef_lookup(args.ecef)
+    ecef_by_satellite = load_ecef_lookups_for_nc4(args.nc4)
+    if not ecef_by_satellite:
+        print(f"ERROR: No ECEF lookup CSVs found for {args.nc4} (expect *_ECEF_lookup_<stem>.csv in same dir)")
+        sys.exit(1)
+    print(f"  Loaded ECEF lookups for satellites: {list(ecef_by_satellite.keys())}")
 
     data_dir = os.path.join(_script_dir, "data")
-    v_band_csv = os.path.join(data_dir, "V-Band 50.3 GHz absolute antenna pattern.csv")
+    v_band_csv = os.path.join(data_dir, "AMSU-A V-Band 50.3 GHz absolute antenna pattern.csv")
     if not os.path.exists(v_band_csv):
         print(f"WARNING: V-Band antenna CSV not found: {v_band_csv}")
         print("  Using ITU fallback (see tuto_radiomdl_weather_phase3.py).")
@@ -329,13 +342,11 @@ def main():
     density = get_emitter_density_vectorized(data["lat"], data["lon"])
     print(f"  Done in {time_module.perf_counter() - t0:.1f} s")
 
-    # Output CSV: out_dir/<satellite>_<nc4_basename_no_ext>_5G_RFI_ch<N>.csv
-    out_dir = args.out_dir
+    out_base_nc4 = os.path.splitext(os.path.basename(args.nc4))[0]
+    out_dir = args.out_dir or os.path.dirname(os.path.abspath(args.nc4))
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
-    satellite_name = args.sat.strip().replace(" ", "_")
-    out_base_nc4 = os.path.splitext(os.path.basename(args.nc4))[0]
-    top5_path = os.path.join(out_dir, f"{satellite_name}_{out_base_nc4}_top5.txt")
+    top5_path = os.path.join(out_dir, f"{out_base_nc4}_top5.txt")
     import pandas as pd
     with open(top5_path, "w") as top5_file:
         for idx, (ch_num, center_freq_hz, bandwidth_hz) in enumerate(AMSUA_CHANNEL_CONFIGS):
@@ -345,7 +356,7 @@ def main():
             freq_max = center_freq_hz + bandwidth_hz / 2.0
             harmonic_in_band = freq_min <= harmonic_freq_hz <= freq_max
 
-            out_csv = os.path.join(out_dir, f"{satellite_name}_{out_base_nc4}_5G_RFI_ch{ch_num}.csv")
+            out_csv = os.path.join(out_dir, f"{out_base_nc4}_5G_RFI_ch{ch_num}.csv")
             print(f"\nChannel {ch_num}: {center_freq_hz/1e9:.2f} GHz, BW={bandwidth_hz/1e6:.0f} MHz, "
                   f"emitter fundamental={emitter_fundamental_hz/1e9:.2f} GHz (2nd harmonic={harmonic_freq_hz/1e9:.2f} GHz)")  # noqa: E501
 
@@ -353,6 +364,7 @@ def main():
                 print(f"  2nd harmonic out of channel band [{freq_min/1e9:.3f}, {freq_max/1e9:.3f}] GHz → zero RFI for all observations")  # noqa: E501
                 df = pd.DataFrame({
                     "timestamp": data["timestamps"],
+                    "satellite": data["satellite"],
                     "lat": np.round(data["lat"], 6),
                     "lon": np.round(data["lon"], 6),
                     "saza": np.round(data["saza"], 6),
@@ -365,7 +377,7 @@ def main():
                 df = run_rfi_for_channel(
                     data,
                     density,
-                    ecef_lookup,
+                    ecef_by_satellite,
                     v_band_antenna,
                     emitter_antenna,
                     ch_num,
@@ -385,17 +397,18 @@ def main():
             top5_file.write("  Top 5 by |rfi_brightness_temperature_K|:\n")
             for rank, idx in enumerate(idx_top5, start=1):
                 row = df.loc[idx]
-                line = (f"    [{rank}] lat: {row['lat']}, lon: {row['lon']}, saza: {row['saza']}, "
-                        f"rfi_power_dBW: {row['rfi_power_dBW']}, rfi_Tb_K: {row['rfi_brightness_temperature_K']}")
+                line = (f"    [{rank}] satellite: {row['satellite']}, lat: {row['lat']}, lon: {row['lon']}, "
+                        f"saza: {row['saza']}, rfi_power_dBW: {row['rfi_power_dBW']}, "
+                        f"rfi_Tb_K: {row['rfi_brightness_temperature_K']}")
                 print(line)
                 top5_file.write(line + "\n")
 
     print(f"\nTop 5 summary written to {top5_path}")
 
-    # Combine channel CSVs into one CSV. Set remove_channel_files=False to keep the per-channel CSVs.
-    combined_path = combine_channel_csvs(out_dir, satellite_name, out_base_nc4, remove_channel_files=False)
+    # combine channel CSVs: set remove_channel_files=False to keep the channel CSVs
+    combined_path = combine_channel_csvs(out_dir, out_base_nc4, remove_channel_files=True)
     if combined_path is not None:
-        print(f"Combined channel CSVs to {combined_path} (per-channel CSVs removed).")
+        print(f"Combined channel CSVs to {combined_path}.")
 
     elapsed = time_module.perf_counter() - t_start
     print(f"\nOverall execution time: {elapsed:.1f} s")

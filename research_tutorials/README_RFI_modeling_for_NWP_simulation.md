@@ -1,6 +1,6 @@
 # RFI estimation: ATMS, AMSU-A, and SSMI-S
 
-Brief procedure to run 5G ground-emitter RFI estimation for weather satellite sensors. Each script processes **one nc4 file** at a time; use the batch scripts below to run all nc4 files in a satellite directory.
+Brief procedure to run 5G ground-emitter RFI estimation for weather satellite sensors. Each nc4 file can contain data from **multiple satellites** (identified by SAID); each script processes one nc4 and uses ECEF lookups from the same sensor directory. Run one nc4 at a time, or use the batch scripts to process all nc4 files in a sensor directory.
 
 - Note that this will require large disk space due to the file sizes of .nc4 files and generated output CSVs.
 
@@ -16,15 +16,13 @@ European Union's Global Human Settlement Layer (GHSL) Population data (GHG-POP) 
 
 Before running any RFI script, you must have ECEF lookup CSVs for each nc4 file. That is done by the TLE01–TLE03 pipeline:
 
-1. Create one directory per satellite; put nc4 files in it.
-2. Skip TLE01 (download TLE) as TLEs are already created for the following:
-    - Satellites: SUOMI-NPP, JPSS-1, NOAA-15, NOAA-18, NOAA-19, METOP-B, METOP-C, DMSP-F17
-    - Date range: 2023-08-01 to 2023-11-01
-3. Run TLE02 (timestamps from nc4), TLE03 (ECEF from TLE + timestamps).
+1. Create **sensor-based** directories (e.g. `util/ATMS/`, `util/AMSU-A/`, `util/SSMI-S/`); put nc4 files in the corresponding sensor directory (already made for ATMS, AMSU-A, and SSMI-S).
+2. Skip TLE01 (download TLE) as TLEs are already created for the satellites listed in [util/README_TLE01_TLE02_TLE03.md](util/README_TLE01_TLE02_TLE03.md).
+3. Run TLE02 with `--input-dir` set to the sensor name (e.g. ATMS); then TLE03 with the same. TLE02 splits timestamps by SAID and writes `{SAT}_timestamp_{stem}.csv` per satellite; TLE03 writes `{SAT}_ECEF_lookup_{stem}.csv` per satellite.
 
 **Full instructions:** [util/README_TLE01_TLE02_TLE03.md](util/README_TLE01_TLE02_TLE03.md).
 
-After that, each satellite directory contains its nc4 files plus `{SAT}_timestamp_{stem}.csv` and `{SAT}_ECEF_lookup_{stem}.csv` per nc4 (same `stem` as the nc4 filename without file extension, .nc4).
+After that, each sensor directory contains nc4 files plus per-satellite `{SAT}_timestamp_{stem}.csv` and `{SAT}_ECEF_lookup_{stem}.csv`. The RFI scripts load all `*_ECEF_lookup_{stem}.csv` for the given nc4 from the same directory.
 
 **Directory structure (after data preparation):**
 
@@ -33,22 +31,23 @@ research_tutorials/
   util/
     data/
       JPSS-1_TLE.txt
+      SUOMI-NPP_TLE.txt
       NOAA-15_TLE.txt
       DMSP-F17_TLE.txt
       ...
-    JPSS-1/
+    ATMS/
       atms_2023080112.nc4
+      SUOMI-NPP_timestamp_atms_2023080112.csv
       JPSS-1_timestamp_atms_2023080112.csv
+      SUOMI-NPP_ECEF_lookup_atms_2023080112.csv
       JPSS-1_ECEF_lookup_atms_2023080112.csv
       ...
-    NOAA-15/
+    AMSU-A/
       amsua_2023080112.nc4
-      NOAA-15_timestamp_amsua_2023080112.csv
       NOAA-15_ECEF_lookup_amsua_2023080112.csv
       ...
-    DMSP-F17/
+    SSMI-S/
       ssmis_2023080112.nc4
-      DMSP-F17_timestamp_ssmis_2023080112.csv
       DMSP-F17_ECEF_lookup_ssmis_2023080112.csv
       ...
   ATMS_RFI_modeling.py
@@ -60,63 +59,104 @@ research_tutorials/
   run_rfi_atms_batch.sh
   run_rfi_amsua_batch.sh
   run_rfi_ssmis_batch.sh
-  README_RFI_estimation.md
+  run_rfi_atms_batch.py
+  run_rfi_amsua_batch.py
+  run_rfi_ssmis_batch.py
+  README_RFI_modeling_for_NWP_simulation.md
   Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md
 ```
 
-After running the RFI batch scripts (section 3), each satellite directory will also contain `{SAT}_{nc4_stem}_5G_RFI_chN.csv` files.
+After running the RFI batch scripts (section 3), each sensor directory will also contain `{nc4_stem}_5G_RFI_chN.csv` (per channel, with columns timestamp, satellite, lat, lon, ...) and `{nc4_stem}_5G_RFI_combined.csv` (timestamp + channel Tb columns only).
 
 ---
 
 ## 3. Running RFI scripts (single nc4)
 
-Run from **`research_tutorials/`**. All three scripts use the same argument pattern: `--sat`, `--nc4`, `--ecef`, `--out_dir` (all required).
+Run from **`research_tutorials/`**. Arguments: `--sensor` (required), `--nc4` (required), `--out_dir` (optional; default is the directory of the nc4 file). ECEF lookups are loaded automatically from the same directory as the nc4 (`*_ECEF_lookup_{stem}.csv`).
 
-### ATMS (e.g. JPSS-1, SUOMI-NPP)
-
-```bash
-python rfi_atms_jpss1_modeling.py --sat JPSS-1 --nc4 util/JPSS-1/atms_2023080112.nc4 --ecef util/JPSS-1/JPSS-1_ECEF_lookup_atms_2023080112.csv --out_dir util/JPSS-1
-```
-
-Output: `--out_dir`/`<sat>_<nc4_stem>_5G_RFI_chN.csv` (channels 3–9).
-
-### AMSU-A (e.g. NOAA-15, NOAA-18, NOAA-19, METOP-B, METOP-C)
+### ATMS (SUOMI-NPP, JPSS-1; SAID 224, 225)
 
 ```bash
-python AMSU-A_RFI_modeling.py --sat NOAA-15 --nc4 util/NOAA-15/amsua_2023080112.nc4 --ecef util/NOAA-15/NOAA-15_ECEF_lookup_amsua_2023080112.csv --out_dir util/NOAA-15
+python ATMS_RFI_modeling.py --sensor ATMS --nc4 util/ATMS/atms_2023080112.nc4 --out_dir util/ATMS
 ```
 
-Output: `--out_dir`/`<sat>_<nc4_stem>_5G_RFI_chN.csv` (channels 3–8).
+Output: `--out_dir`/`{nc4_stem}_5G_RFI_chN.csv` (channels 3–9), each with columns timestamp, satellite, lat, lon, saza, rfi_power_dBW, rfi_brightness_temperature_K.
 
-### SSMI-S (DMSP-F17)
+### AMSU-A (NOAA-15/18/19, METOP-B/C)
 
 ```bash
-python SSMI-S_RFI_modeling.py --sat DMSP-F17 --nc4 util/DMSP-F17/ssmis_2023080112.nc4 --ecef util/DMSP-F17/DMSP-F17_ECEF_lookup_ssmis_2023080112.csv --out_dir util/DMSP-F17
+python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 util/AMSU-A/amsua_2023080112.nc4 --out_dir util/AMSU-A
 ```
 
-Output: `--out_dir`/`<sat>_<nc4_stem>_5G_RFI_chN.csv` (channels 1–5).
+Output: `--out_dir`/`{nc4_stem}_5G_RFI_chN.csv` (channels 3–8), same column layout.
+
+### SSMI-S (only SAID 285 = DMSP-F17; SAID 286 and others get RFI = 0)
+
+```bash
+python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 util/SSMI-S/ssmis_2023080112.nc4 --out_dir util/SSMI-S
+```
+
+Output: `--out_dir`/`{nc4_stem}_5G_RFI_chN.csv` (channels 1–5; no SAZA column). Combined CSV has timestamp and channel Tb columns only (no satellite column).
 
 ---
 
 ## 4. Batch runs (all nc4 files in a directory)
 
-Each RFI script handles a single nc4 file. To process every nc4 in a satellite directory, use the batch scripts below. They assume:
+Each RFI script handles a single nc4 file. To process every nc4 in a **sensor directory**, use the batch scripts below. They assume:
 
 - You run from **`research_tutorials/`**.
-- Satellite directory contains `*.nc4` and matching `{SAT}_ECEF_lookup_{stem}.csv` (from TLE03).
-- Outputs are written into the same satellite directory.
+- Sensor directory (e.g. `util/ATMS/`) contains `*.nc4` and per-satellite `{SAT}_ECEF_lookup_{stem}.csv` (from TLE03).
+- Outputs are written into the same sensor directory.
 
 **Usage:**
 
 | Platform   | ATMS | AMSU-A | SSMI-S |
 |-----------|------|--------|--------|
-| Windows   | `run_rfi_atms_batch.bat util\JPSS-1` | `run_rfi_amsua_batch.bat util\NOAA-15` | `run_rfi_ssmis_batch.bat util\DMSP-F17` |
-| macOS/Linux | `./run_rfi_atms_batch.sh util/JPSS-1` | `./run_rfi_amsua_batch.sh util/NOAA-15` | `./run_rfi_ssmis_batch.sh util/DMSP-F17` |
+| Windows   | `run_rfi_atms_batch.bat util/ATMS` | `run_rfi_amsua_batch.bat util/AMSU-A` | `run_rfi_ssmis_batch.bat util/SSMI-S` |
+| macOS/Linux | `./run_rfi_atms_batch.sh util/ATMS` | `./run_rfi_amsua_batch.sh util/AMSU-A` | `./run_rfi_ssmis_batch.sh util/SSMI-S` |
 
-The single argument is the path to the satellite directory (relative to `research_tutorials/`). Satellite name is taken from the directory name (e.g. `JPSS-1` from `util/JPSS-1`).
+The single argument is the path to the **sensor directory** (e.g. `util/ATMS`, `util/AMSU-A`, `util/SSMI-S`).
 
 **Windows:** Run in Command Prompt or PowerShell with current directory `research_tutorials\` (e.g. `cd research_tutorials` then run the .bat).
 
 **macOS/Linux:** Make scripts executable once from `research_tutorials/`: `chmod +x run_rfi_*_batch.sh`, then run as above.
 
 Batch scripts are located in `research_tutorials/` and must be run with the working directory set to `research_tutorials/` (the scripts change into that directory automatically on macOS/Linux).
+
+---
+
+## 5. Parallel processing batch runs using multi-core processor
+
+For faster batch runs on multi-core computers, use the Python batch drivers (if available) that run the same RFI logic as in section 4 but with **parallel workers**. This is **cross-platform** (Windows, macOS, Linux).
+
+**Assumptions:** Same as section 4 (run from `research_tutorials/`, sensor directory contains `*.nc4` and per-satellite `{SAT}_ECEF_lookup_{stem}.csv`, outputs go into the same sensor directory).
+
+**Usage:** One required argument — the path to the **sensor directory** (e.g. `util/ATMS`, `util/AMSU-A`, `util/SSMI-S`). Optional **`--workers`** (or **`-w`**) sets the number of parallel workers; if omitted, the default is CPU count minus 2. The minimum number of workers is 2.
+
+| Sensor | Command (run from `research_tutorials/`) |
+|--------|----------------------------------------|
+| ATMS   | `python run_rfi_atms_batch.py util/ATMS` |
+| AMSU-A | `python run_rfi_amsua_batch.py util/AMSU-A` |
+| SSMI-S | `python run_rfi_ssmis_batch.py util/SSMI-S` |
+
+**Examples with `--workers`:**
+- `python run_rfi_atms_batch.py util/ATMS --workers 4` — use 4 parallel workers.
+- `python run_rfi_amsua_batch.py util/AMSU-A -w 1` — run single-threaded (one nc4 at a time).
+
+Progress is printed as each nc4 file completes, e.g. `[2/5] atms_2023080113.nc4 ... SUCCESS`.
+
+Outputs are the same as in section 3: `{nc4_stem}_5G_RFI_chN.csv` and `{nc4_stem}_5G_RFI_combined.csv` in the given sensor directory.
+
+---
+
+## Note
+
+- If you are interested in both RFI power in dBW and brightness temperature in Kelvin, then please set the argument `remove_channel_files` as `False` (`remove_channel_files=False`) at the `combine_channel_csvs()` function call, which is located around the end of each sensor's RFI modeling script (`ATMS_RFI_modeling.py`, `AMSU-A_RFI_modeling.py`, and `SSMI-S_RFI_modeling.py`). This will keep the output CSVs, RFI per channel. Currently, it is set to be `True` to save disk space.
+
+```
+...
+  combined_path = combine_channel_csvs(out_dir, out_base_nc4, remove_channel_files=False)
+...
+```
+
+This will remove intermidiately generated CSV files for each channel, which will save disk space.
