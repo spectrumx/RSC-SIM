@@ -1,20 +1,22 @@
 """
-Generate one CSV of unique timestamps per netCDF-4 file (ATMS or similar).
+Generate timestamp CSVs per netCDF-4 file, split by satellite (SAID).
 
-Reads each .nc4 file in the input directory, extracts YEAR, MONTH, DAYS, HOUR,
-MINUTE, SECOND, builds ISO 8601-style timestamps (YYYY-MM-DD HH:MM:SS.fff),
-collects unique timestamps within that file only, and writes one CSV per nc4
-file into the same directory. Output filename: {satellite_name}_timestamp_
-{nc4_basename_no_ext}.csv (e.g. JPSS-1_timestamp_atms_2023080112.csv).
-Satellite name is taken from the input directory name.
+Each nc4 file contains data from multiple satellites (distinguished by SAID).
+Reads each .nc4 in the input directory (sensor-based: ATMS/, AMSU-A/, SSMI-S/),
+extracts YEAR, MONTH, DAYS, HOUR, MINUTE, SECOND and SAID, builds timestamps,
+splits by SAID into per-satellite lists, and writes one CSV per (satellite, nc4)
+into the same directory. Output filename: {satellite_name}_timestamp_{nc4_stem}.csv.
 
 Usage:
-    python TLE02_generate_timestamps_csv_from_nc4.py --input-dir JPSS-1
+    python TLE02_generate_timestamps_csv_from_nc4.py --input-dir ATMS
+    python TLE02_generate_timestamps_csv_from_nc4.py --input-dir AMSU-A
+    python TLE02_generate_timestamps_csv_from_nc4.py --input-dir SSMI-S
 """
 
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +28,25 @@ from netCDF4 import Dataset
 _SCRIPT_DIR = Path(__file__).resolve().parent
 
 TIME_VARS = ("YEAR", "MONTH", "DAYS", "HOUR", "MINUTE", "SECOND")
+SAID_VAR = "SAID"
+
+# Sensor name (input-dir name) -> SAID value (int) -> satellite name
+SENSOR_SAID_TO_SATELLITE = {
+    "ATMS": {
+        224: "SUOMI-NPP",
+        225: "JPSS-1",
+    },
+    "AMSU-A": {
+        206: "NOAA-15",
+        209: "NOAA-18",
+        223: "NOAA-19",
+        3: "METOP-B",
+        5: "METOP-C",
+    },
+    "SSMI-S": {
+        285: "DMSP-F17"
+    },
+}
 
 
 def _get_time_array(ds: Dataset, name: str) -> np.ndarray:
@@ -38,27 +59,47 @@ def _get_time_array(ds: Dataset, name: str) -> np.ndarray:
     return np.asarray(arr, dtype=float).ravel()
 
 
-def _timestamps_from_nc4(filepath: Path) -> list[str]:
+def _timestamps_by_satellite_from_nc4(
+    filepath: Path,
+    said_to_satellite: dict[int, str],
+) -> dict[str, list[str]]:
     """
-    Read one .nc4 file, extract YEAR, MONTH, DAYS, HOUR, MINUTE, SECOND,
-    return list of timestamp strings. Dataset is closed on exit; time arrays
-    are explicitly freed before return to minimize peak memory.
+    Read one .nc4 file, extract TIME_VARS and SAID, build timestamps per observation,
+    group by SAID -> satellite name, return dict satellite_name -> list of timestamp strings
+    (with duplicates per obs; caller will unique/sort).
     """
-    out = []
     with Dataset(str(filepath), "r") as ds:
         for v in TIME_VARS:
             if v not in ds.variables:
-                return out
+                return {}
+        if SAID_VAR not in ds.variables:
+            raise KeyError(
+                f"Variable '{SAID_VAR}' not found in {list(ds.variables.keys())}. "
+                "Required to split data by satellite."
+            )
         year = _get_time_array(ds, "YEAR")
         month = _get_time_array(ds, "MONTH")
         days = _get_time_array(ds, "DAYS")
         hour = _get_time_array(ds, "HOUR")
         minute = _get_time_array(ds, "MINUTE")
         second = _get_time_array(ds, "SECOND")
+        said_arr = np.asarray(ds.variables[SAID_VAR][...]).ravel()
+        if hasattr(said_arr, "filled"):
+            said_arr = said_arr.filled(-999)
+        said_arr = np.asarray(said_arr, dtype=int)
+
         n = len(year)
-        if not (n == len(month) == len(days) == len(hour) == len(minute) == len(second)):
-            return out
+        if not (
+            n == len(month) == len(days) == len(hour) == len(minute) == len(second) == len(said_arr)
+        ):
+            return {}
+
+        by_satellite: dict[str, list[str]] = defaultdict(list)
         for i in range(n):
+            said_val = int(said_arr[i])
+            if said_val not in said_to_satellite:
+                continue
+            sat_name = said_to_satellite[said_val]
             y, mo, d = int(year[i]), int(month[i]), int(days[i])
             h, mi = int(hour[i]), int(minute[i])
             sec = float(second[i])
@@ -72,44 +113,55 @@ def _timestamps_from_nc4(filepath: Path) -> list[str]:
                 dt = datetime(y, mo, d, h, mi, sec_whole, micro)
             except ValueError:
                 continue
-            # ISO 8601 style: YYYY-MM-DD HH:MM:SS.fff
             ts_str = dt.strftime("%Y-%m-%d %H:%M:%S") + f".{micro // 1000:03d}"
-            out.append(ts_str)
-        # Release time arrays before returning so memory is freed while set is updated
-        del year, month, days, hour, minute, second
-    return out
+            by_satellite[sat_name].append(ts_str)
+
+    return dict(by_satellite)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate one CSV of unique timestamps per netCDF-4 file (YEAR, MONTH, DAYS, HOUR, MINUTE, SECOND)."
+        description="Generate per-satellite timestamp CSVs from nc4 files (sensor dir; split by SAID)."
     )
     parser.add_argument(
         "--input-dir",
         "-i",
         type=Path,
         required=True,
-        help="Directory containing .nc4 files (e.g., JPSS-1 or path/to/JPSS-1). Timestamp CSVs are written here. Directory name is used as satellite_name.",  # noqa: E501
+        help="Sensor directory containing .nc4 files (e.g. ATMS, AMSU-A, SSMI-S). Timestamp CSVs are written here.",
     )
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir).resolve()
     if not input_dir.is_dir():
         raise NotADirectoryError(f"Not a directory: {input_dir}")
-    satellite_name = input_dir.name
+    sensor_name = input_dir.name
+    if sensor_name not in SENSOR_SAID_TO_SATELLITE:
+        raise ValueError(
+            f"Unknown sensor directory name: {sensor_name!r}. "
+            f"Expected one of: {list(SENSOR_SAID_TO_SATELLITE.keys())}"
+        )
+    said_to_satellite = SENSOR_SAID_TO_SATELLITE[sensor_name]
 
     nc4_files = sorted(input_dir.glob("*.nc4"))
-    print(f"Found {len(nc4_files):,} .nc4 files in {input_dir}. Writing one timestamp CSV per file to same directory.")
+    print(
+        f"Found {len(nc4_files):,} .nc4 files in {input_dir}. "
+        "Writing per-satellite timestamp CSVs into same directory."
+    )
 
     for fp in nc4_files:
         try:
-            ts_list = _timestamps_from_nc4(fp)
-            unique_ts = sorted(set(ts_list))
-            out_name = f"{satellite_name}_timestamp_{fp.stem}.csv"
-            out_path = input_dir / out_name
-            df = pd.DataFrame({"timestamp": unique_ts})
-            df.to_csv(out_path, index=False)
-            print(f"  {fp.name} -> {out_name} ({len(unique_ts):,} unique timestamps)")
+            by_sat = _timestamps_by_satellite_from_nc4(fp, said_to_satellite)
+            if not by_sat:
+                print(f"  Warning: skipped {fp.name} (missing time vars or empty)")
+                continue
+            for sat_name, ts_list in by_sat.items():
+                unique_ts = sorted(set(ts_list))
+                out_name = f"{sat_name}_timestamp_{fp.stem}.csv"
+                out_path = input_dir / out_name
+                df = pd.DataFrame({"timestamp": unique_ts})
+                df.to_csv(out_path, index=False)
+                print(f"  {fp.name} -> {out_name} ({len(unique_ts):,} unique timestamps)")
         except Exception as e:
             print(f"Warning: skipped {fp.name}: {e}")
 

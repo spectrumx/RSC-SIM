@@ -710,6 +710,8 @@ def model_rfi_nwp_5g_single_time(
         use_full_itu_p676=True,
     )
     gain_ws = weather_sat_antenna.get_gain_values(emitter_dec, emitter_caz)
+    # Emitter: eirp_per_emitter_dbw is EIRP at boresight (already P_tx + G_tx_max).
+    # gain_emitter_rel = pattern in direction of satellite (0..1), not gain again—no double-count.
     gain_emitter_abs = emitter_antenna.get_gain_values(emitter_dec, emitter_caz)
     peak_emitter = emitter_antenna.get_boresight_gain()
     gain_emitter_rel = gain_emitter_abs / peak_emitter
@@ -833,6 +835,8 @@ def model_rfi_nwp_5g_single_time_ssmis(
         use_full_itu_p676=True,
     )
     gain_ws = weather_sat_antenna.get_gain_values(emitter_dec, emitter_caz)
+    # Emitter: eirp_per_emitter_dbw is EIRP at boresight (already P_tx + G_tx_max).
+    # gain_emitter_rel = pattern in direction of satellite (0..1), not gain again—no double-count.
     gain_emitter_abs = emitter_antenna.get_gain_values(emitter_dec, emitter_caz)
     peak_emitter = emitter_antenna.get_boresight_gain()
     gain_emitter_rel = gain_emitter_abs / peak_emitter
@@ -865,7 +869,84 @@ def model_rfi_nwp_5g_single_time_ssmis(
     return rfi_power_dBW, rfi_tb_K
 
 
-# Find ECEF from lookup table
+# SAID (Satellite ID) in nc4: map to satellite name per sensor. Used by RFI scripts to select ECEF per observation.
+SENSOR_SAID_TO_SATELLITE = {
+    "ATMS": {224: "SUOMI-NPP", 225: "JPSS-1"},
+    "AMSU-A": {206: "NOAA-15", 209: "NOAA-18", 223: "NOAA-19", 3: "METOP-B", 5: "METOP-C"},
+    "SSMI-S": {285: "DMSP-F17", 286: "DMSP-F18"},
+}
+# SAIDs for which we compute RFI; others get RFI = 0. SSMI-S: only DMSP-F17 (285).
+SENSOR_ALLOWED_SAIDS = {
+    "ATMS": (224, 225),
+    "AMSU-A": (206, 209, 223, 3, 5),
+    "SSMI-S": (285,),
+}
+
+
+def said_to_satellite_array(said_arr, sensor_name: str) -> np.ndarray:
+    """Map SAID (int) per observation to satellite name (str). Unknown SAID -> empty string. Vectorized."""
+    said_flat = np.asarray(said_arr).ravel().astype(np.int64)
+    mapping = SENSOR_SAID_TO_SATELLITE.get(sensor_name, {})
+    if not mapping:
+        return np.full(said_flat.shape, "", dtype=object)
+    out = np.full(said_flat.shape, "", dtype=object)
+    for said_val, name in mapping.items():
+        out[said_flat == said_val] = name
+    return out
+
+
+def iter_valid_ts_sat_indices(timestamps, satellite, allowed, ecef_by_satellite):
+    """
+    Single-pass grouping: yield (ts, sat, indices, coords) for each valid (ts, sat) that has ECEF.
+    Avoids building a set of n_obs tuples, repeated full-array mask builds, and repeated dict lookups.
+    indices: 1d int array of row indices. coords: (X, Y, Z) tuple from ECEF lookup.
+    """
+    from collections import defaultdict
+    key_to_data = defaultdict(lambda: {"indices": [], "coords": None})
+    timestamps = np.asarray(timestamps).ravel()
+    satellite = np.asarray(satellite).ravel()
+    n_obs = len(timestamps)
+    for i in range(n_obs):
+        ts, sat = timestamps.flat[i], satellite.flat[i]
+        if not sat or sat not in allowed or sat not in ecef_by_satellite:
+            continue
+        coords = ecef_by_satellite[sat].get(ts)
+        if coords is None:
+            continue
+        key = (ts, sat)
+        key_to_data[key]["indices"].append(i)
+        key_to_data[key]["coords"] = coords
+    for (ts, sat), data in key_to_data.items():
+        yield ts, sat, np.asarray(data["indices"], dtype=np.intp), data["coords"]
+
+
+def load_ecef_lookups_for_nc4(nc4_path: str) -> dict:
+    """
+    Load all ECEF lookup CSVs for the given nc4 file from the same directory.
+    nc4_path e.g. util/ATMS/atms_2023080112.nc4 → finds *_ECEF_lookup_atms_2023080112.csv,
+    parses satellite name from each filename, returns dict[satellite_name] -> ecef_lookup (timestamp -> (X,Y,Z)).
+    """
+    path = Path(nc4_path).resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"nc4 file not found: {nc4_path}")
+    directory = path.parent
+    stem = path.stem
+    pattern = f"*_ECEF_lookup_{stem}.csv"
+    ecef_files = sorted(directory.glob(pattern))
+    result = {}
+    for fp in ecef_files:
+        # Parse: {satellite}_ECEF_lookup_{stem}.csv
+        name = fp.stem
+        prefix = f"_ECEF_lookup_{stem}"
+        if not name.endswith(prefix):
+            continue
+        satellite_name = name[: -len(prefix)]
+        if not satellite_name:
+            continue
+        result[satellite_name] = load_ecef_lookup(str(fp))
+    return result
+
+
 def load_ecef_lookup(filepath):
     """
     Loads the CSV into a dictionary for instant O(1) lookups.
@@ -888,14 +969,14 @@ def load_ecef_lookup(filepath):
     return ecef_dict
 
 
-def combine_channel_csvs(out_dir, satellite_name, nc4_stem, remove_channel_files=True):
+def combine_channel_csvs(out_dir, nc4_stem, remove_channel_files=True):
     """
     Combine per-channel RFI CSVs into one CSV (timestamp + channelN_rfi_brightness_temperature_K).
+    No satellite column in combined output. Finds files matching {nc4_stem}_5G_RFI_chN.csv.
     Optionally remove the per-channel CSV files after writing the combined file.
 
     Args:
         out_dir: Directory containing channel CSVs (str or Path).
-        satellite_name: Satellite name used in filenames (e.g. JPSS-1).
         nc4_stem: nc4 filename without extension (e.g. atms_2023080112).
         remove_channel_files: If True, delete per-channel CSVs after combining (default True).
 
@@ -906,7 +987,7 @@ def combine_channel_csvs(out_dir, satellite_name, nc4_stem, remove_channel_files
     if not out_dir.is_dir():
         return None
 
-    pattern = re.compile(rf"^{re.escape(satellite_name)}_{re.escape(nc4_stem)}_5G_RFI_ch(\d+)\.csv$")
+    pattern = re.compile(rf"^{re.escape(nc4_stem)}_5G_RFI_ch(\d+)\.csv$")
     channel_files = []
     for f in out_dir.iterdir():
         if not f.is_file():
@@ -936,7 +1017,7 @@ def combine_channel_csvs(out_dir, satellite_name, nc4_stem, remove_channel_files
         data[f"channel{ch_num}_rfi_brightness_temperature_K"] = df["rfi_brightness_temperature_K"].values
 
     combined = pd.DataFrame(data)
-    out_name = f"{satellite_name}_{nc4_stem}_5G_RFI_combined.csv"
+    out_name = f"{nc4_stem}_5G_RFI_combined.csv"
     out_path = out_dir / out_name
     combined.to_csv(out_path, index=False)
 
