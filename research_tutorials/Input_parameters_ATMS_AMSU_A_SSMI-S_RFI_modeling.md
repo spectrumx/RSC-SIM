@@ -1,6 +1,6 @@
 # RFI Modeling Input Parameters: Reference for Expert Tuning
 
-This document lists input parameters and variable names that have a strong influence on 5G-to-weather-satellite RFI estimates (RFI power in dBW and brightness temperature in Kelvin). It is intended for experts who will adjust these parameters for more accurate estimation across ATMS, AMSU-A, and SSMI-S sensor models.
+Reference for tuning **5G** and **Starlink ground gateway** RFI (dBW, brightness temperature K (Tb)), and for understanding **cloud/rain slant attenuation** applied to the **sum** of those Tb values before they are added to `TMBR` in `{stem}_RFI.nc4`.
 
 The three RFI modeling scripts are:
 
@@ -8,7 +8,7 @@ The three RFI modeling scripts are:
 - **AMSU-A:** `AMSU-A_RFI_modeling.py` (cross-track, nadir geometry)
 - **SSMI-S:** `SSMI-S_RFI_modeling.py` (conical scan, fixed elevation)
 
-Shared RFI and density logic lives in `src/weather_sat_nwp.py` and `src/weather_sat_mdl.py`. Parameters are grouped by impact area.
+Shared 5G / density logic: `src/weather_sat_nwp.py`, `src/weather_sat_mdl.py`. Gateway geometry and antennas: `src/starlink_gateway_mdl.py`. Cloud/rain grids and attenuation: `src/attenuation_mdl.py` (P.840 / P.838); nc4 merge: `copy_nc4_with_tmbr_plus_rfi` in `weather_sat_nwp.py`.
 
 ---
 
@@ -130,7 +130,37 @@ These are passed as `temperature`, `pressure`, and `humidity` into the RFI model
 
 ---
 
-## 8. SSMI-S-specific geometry (moderate impact for SSMI-S only)
+## 8. Starlink ground gateway (high impact when gateways fall in beam)
+
+Direct in-band RFI from fixed gateway sites. Gateway list: CLI **`--gateways_csv`** (default `research_tutorials/data/starlink_gateways_geolocations.csv`). Per-sensor script constants (names aligned across ATMS / AMSU-A / SSMI-S):
+
+| Variable name | Location | Unit | Description |
+|---------------|----------|------|-------------|
+| `EIRP_PER_GATEWAY_DBW` | Each sensor script | dBW | Aggregate EIRP reference per gateway (default 70.5 dBW). |
+| `N_ANTENNAS_PER_GATEWAY` | Each sensor script | count | Antennas per site; scales gateway contribution in the model. Default 40 |
+| `gateway_center_freq_hz_list` | Each sensor script | Hz | Direct RFI carrier per modeled channel (typically near channel center). |
+| `GATEWAY_GAIN_MAX`, `GATEWAY_HORIZ_BW`, `GATEWAY_VERT_BW`, `GATEWAY_ETA_RAD` | Each sensor script | dBi, deg, deg, — | Gateway sector pattern (same family as 5G sector builder). |
+| `GATEWAY_BORESIGHT_POINTING` | Each sensor script | bool | Boresight / random-boresight behavior (see script + `starlink_gateway_mdl`). |
+
+**Note:** Changing EIRP, N antenna of gateway, or pattern strongly changes `GATE_RFI` and the summed Tb. `CELL_RFI` / `GATE_RFI` in nc4 are **pre–cloud/rain** Tb; only the increment added to `TMBR` uses the attenuation factor.
+
+---
+
+## 9. Cloud and rain path attenuation (moderate impact on effective Tb in `TMBR`)
+
+After 5G + gateway Tb are summed per channel, slant attenuation **A** (dB, ≥ 0) is computed from ITU monthly NetCDF **`itu_iclw_rain_info_MM.nc`** in `research_tutorials/data/` (month from filename stem). Increment added to `TMBR` is **(5G Tb + gateway Tb) × 10^(-A/10)**. Variable **`CLOUD_RAIN_ATT`** stores **A** on the same compact channel axis as `CELL_RFI` / `GATE_RFI`.
+
+| Item | Location | Description |
+|------|----------|-------------|
+| `CLOUD_RAIN_ICLW_ABS_THRESHOLD` | Each sensor script | \|ICLW\| threshold (kg m⁻²) below which cloud term is gated off in P.840 path (default **0.05** in scripts; not a hidden default inside `attenuation_mdl`). |
+| ITU NetCDF | `research_tutorials/data/` | ICLW mean/std + `rain_prob` / `rain_rate`; used by `attenuation_mdl.load_*` / `map_fovs_*` / `compute_cloud_rain_atten_db_for_fovs`. |
+| RNG | Scripts | `np.random.default_rng(None)` for ICLW/rain draws unless you change the code. |
+
+**Note:** Missing monthly file → **0 dB** everywhere (warning). Tune `CLOUD_RAIN_ICLW_ABS_THRESHOLD` only if your cloud climatology assumptions change.
+
+---
+
+## 10. SSMI-S-specific geometry (moderate impact for SSMI-S only)
 
 SSMI-S uses a fixed slant range and elevation instead of per-FOV distance and SAZA.
 
@@ -145,16 +175,18 @@ Passed as `slant_range_km` and `elevation_deg` into `model_rfi_nwp_5g_single_tim
 
 ---
 
-## 9. Summary: parameters with the strongest effect on RFI (dBW and K)
+## 11. Summary: parameters with the strongest effect on RFI (dBW and K)
 
-1. **EIRP per emitter** (`EIRP_PER_EMITTER_DBW` or `TRANSMIT_POWER_DBW` + `GROUND_EMITTER_GAIN_MAX`): linear in dB for RFI power.
+1. **EIRP per emitter** (`EIRP_PER_EMITTER_DBW` or `TRANSMIT_POWER_DBW` + `GROUND_EMITTER_GAIN_MAX`): linear in dB for 5G RFI power.
 2. **Emitter density and FOV area** (population tiers in `_population_to_density`, `SENSOR_BEAMWIDTH_DEG`, SSMI-S FOV constants): set n_emitters and thus effective EIRP (10*log10(n_emitters)).
-3. **Second harmonic factor** (`second_harmonic_factor` in `weather_sat_nwp.py`): linear scaling of received power; change requires code edit.
+3. **Second harmonic factor** (`second_harmonic_factor` in `weather_sat_nwp.py`): linear scaling of 5G received power; change requires code edit.
 4. **Emitter fundamental frequency** (`emitter_fundamental_hz_list`): must place second harmonic in channel band; also affects free-space and atmospheric loss via frequency.
-5. **5G antenna pattern** (`GROUND_EMITTER_*` and pattern implementation): angular dependence of emitter gain.
+5. **5G antenna pattern** (`GROUND_EMITTER_*`): angular dependence of emitter gain.
 6. **Weather satellite antenna pattern** (V-band CSV and loading parameters): angular dependence of receiver gain.
 7. **Channel bandwidth**: scales brightness temperature Tb = P / (k_B * B); does not change RFI power in dBW.
-8. **Atmospheric parameters** (`TEMPERATURE_K`, `PRESSURE_PA`, `HUMIDITY_PCT`): moderate effect on path loss.
-9. **SSMI-S geometry** (`SSMIS_SLANT_RANGE_KM`, `SSMIS_ELEVATION_DEG`): path length and elevation for SSMI-S only.
+8. **Atmospheric parameters** (`TEMPERATURE_K`, `PRESSURE_PA`, `HUMIDITY_PCT`): P.676 path loss (5G and gateway chains).
+9. **Starlink gateway** (`EIRP_PER_GATEWAY_DBW`, `N_ANTENNAS_PER_GATEWAY`, `gateway_center_freq_hz_list`, gateway antenna constants): sets gateway Tb and summed RFI.
+10. **Cloud/rain attenuation** (monthly `itu_iclw_rain_info_MM.nc`, `CLOUD_RAIN_ICLW_ABS_THRESHOLD`): scales the **summed** Tb increment into `TMBR`; does not rescale `CELL_RFI` / `GATE_RFI`.
+11. **SSMI-S geometry** (`SSMIS_SLANT_RANGE_KM`, `SSMIS_ELEVATION_DEG`): path length and elevation for SSMI-S only.
 
 ---

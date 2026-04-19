@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run ATMS RFI for every .nc4 in SENSOR_DIR. ECEF lookups loaded from same dir (*_ECEF_lookup_<stem>.csv).
+# Run ATMS RFI (5G + Starlink gateway; default gateways CSV) for every .nc4 in SENSOR_DIR.
+# ECEF lookups: same dir (*_ECEF_lookup_<stem>.csv).
 # Usage: ./run_rfi_atms_batch.sh SENSOR_DIR   e.g. ./run_rfi_atms_batch.sh util/ATMS
 
 set -e

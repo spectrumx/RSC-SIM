@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run SSMI-S RFI for every .nc4 in SENSOR_DIR (only SAID 285 / DMSP-F17). ECEF lookups from same dir.
+# Run SSMI-S RFI (5G + Starlink gateway; default gateways CSV) for every .nc4 in SENSOR_DIR.
+# Only SAID 285 / DMSP-F17. ECEF lookups from same dir.
 # Usage: ./run_rfi_ssmis_batch.sh SENSOR_DIR   e.g. ./run_rfi_ssmis_batch.sh util/SSMI-S
 
 set -e

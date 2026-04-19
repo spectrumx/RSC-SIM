@@ -4,7 +4,7 @@ Radio Science Coexistence Simulator RSC-SIM is a sophisticated Python framework 
 
 This software grew and evolved out of the RadioMdl codebase, a Julia package created by Dr. Samuel Thé (https://github.com/SJJThe). Modified version of the Julia codes are found at `Julia/` directory.
 
-In addition, RSC-SIM supports **weather satellite RFI modeling** from Starlink satellite back/side lobes and 5G ground emitters/networks to a weather satellite in a "looking-down" observation scenario, which includes environment effects such as atmospheric attenuation/absorption by oxygen, water vapor modeling, atmospheric refraction, terrain masking, and ground reflections for Starlink main lobe emissions.
+In addition, RSC-SIM supports **weather satellite RFI modeling** from Starlink satellite back/side lobes, 5G ground emitters/networks, and Starlink ground gateways  to a weather satellite in a "looking-down" observation scenario, which includes environment effects such as atmospheric attenuation/absorption by oxygen/cloud/rain, water vapor modeling, atmospheric refraction, terrain masking, and ground reflections.
 
 ## Requirements
 
@@ -16,15 +16,17 @@ In addition, RSC-SIM supports **weather satellite RFI modeling** from Starlink s
 - `RadioMdl.py`: Core constants and utilities
 - `antenna_pattern.py`: Antenna pattern calculations
 - `astro_mdl.py`: Astronomical modeling
+- `attenuation_mdl.py`: Atmospheric absorption/attenuation modeling
 - `coord_frames.py`: Coordinate frame transformations
+- `env_mdl.py`: Environment effects modeling
 - `obs_mdl.py`: Observation modeling
 - `radio_io.py`: Radio I/O operations
 - `radio_types.py`: Radio data types
 - `sat_mdl.py`: Satellite modeling
-- `env_mdl.py`: Environment effects modeling
+- `starlink_gateway_mdl.py`: Starlink ground gateway modeling
 - `weather_sat_mdl.py`: Weather satellite RFI modeling for a single field of view (FOV) / footprint
 - `weather_sat_nwp.py`: Weather satellite RFI modeling for numerical weather prediction (NWP) simulation
-- `attenuation_mdl.py`: Atmospheric absorption/attenuation modeling
+
 
 ## Tutorial Resources
 
@@ -149,6 +151,9 @@ The package automatically installs the following dependencies:
 - `sgp4>=2.0.0` - Satellite orbit propagation
 - `rasterio>=1.3.0` - Geospatial raster data I/O
 - `ipykernel>=6.0.0` - Jupyter notebook kernel support
+- `netCDF4>=1.7.0` - Reading/writing netCDF file
+- `reverse-geocoder>=1.5.0` - finding the nearest country from latitude/longitude
+- `requests>=2.32.0` - HTTP requests
 
 ## Usage
 

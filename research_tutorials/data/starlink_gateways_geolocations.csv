@@ -1,0 +1,436 @@
+name,layer,gateway_type,lat,lon
+"Accra, GH | Mega",Africa,gateway,5.80399,-0.090984
+"Aerzen, DE",Europe,gateway,52.060989,9.328231
+"Aflenz, OS | Mega",Europe,gateway,47.553232,15.292154
+"Akita, JP",APAC,gateway,39.63828,140.06466
+"Akron, OH - The All Gas No Brakes GW",North America,gateway,41.057528,-81.519917
+"Anakie, VIC, AU",APAC,gateway,-37.953169,144.328172
+"Anchorage, AK - Great Alaskan GW",North America,gateway,61.18575,-149.876389
+"Anderson, SC | Mega",North America,gateway,34.4446944,-82.6708333
+"Angeles, PH",APAC,gateway,15.17087,120.505747
+"Angola, IN | Mega",North America,gateway,41.6355278,-84.974
+"Apple Hill, ON, CA - Apple Hill GW",North America,gateway,45.223467,-74.763919
+"Aquierpa, PE | Mega",South America,gateway,-16.470219,-71.513401
+"Aracaju, BR",South America,gateway,-11.081214,-37.146714
+"Arbuckle, CA",North America,gateway,39.057,-122.06
+"Archerfield, QLD, AU | Mega",APAC,gateway,-27.574457,153.002527
+"Arlington, OR | Mega",North America,gateway,45.62552778,-120.1747778
+"Arvin, CA | Mega",North America,gateway,35.1620556,-118.8783611
+Ashburn VA - The Pew Pew GW,North America,gateway,39.015667,-77.464917
+"Ashburn, VA - The Ash Ketchum GW",North America,gateway,39.015278,-77.459722
+"Ashburn, VA - The Greedy Tortoise GW",North America,gateway,39.021722,-77.452806
+"Ashland, IL - The Sea Monkey GW",North America,gateway,41.841361,-87.671111
+"Atlanta, GA - Ponce City Market GW",North America,gateway,33.772222,-84.365278
+"Atlanta, GA - The Edged ATL1 GW",North America,gateway,33.815056,-84.460083
+"Atlanta, GA - The Georgia Powerhouse GW",North America,gateway,33.777556,-84.416056
+"Atlanta, GA - The Hotlanta GW",North America,gateway,33.733472,-84.424639
+"Atlanta, GA - The Limit of Physics GW",North America,gateway,33.8955,-84.45355
+"Augusta, WA, AU",APAC,gateway,-34.3172547,115.150002
+"Awarua, NZ",APAC,gateway,-46.530531,168.383076
+"Bald Hills, QLD, AU | Mega",APAC,gateway,-27.3133,153.0136
+"Barreira, BR | Mega",South America,gateway,-4.2869889,-38.6492444
+"Barrow, AK, US",Community Gateways,community_gateway,71.27475,-156.803972
+"Bathurst, NSW, AU | Mega",APAC,gateway,-33.436665,149.52242
+"Baxley, GA / Surrency, GA | Mega",North America,gateway,31.6821667,-82.2689722
+"Beekmantown, NY - Little GW That Could | Mega",North America,gateway,44.79025,-73.479444
+"Bellingham, WA - The Bellingham GW",North America,gateway,48.774028,-122.449111
+"Benevides, BR | Mega",South America,gateway,-1.359325,-48.2582528
+"Benkelman, NE | Mega",North America,gateway,40.1049444,-101.51025
+"Betbunia(?), BD",APAC,gateway,22.5476,91.9959
+"Blountsville, AL | Mega",North America,gateway,34.0984444,-86.5785278
+"Blue City, OM | Mega expansion",Middle East,gateway,23.744518,57.80947
+"Bluffdale, UT - The Bonanza Express GW",North America,gateway,40.47975,-111.904167
+"Boca Chica, TX - Stargate GW",North America,gateway,25.9837441,-97.1907243
+"Bogantungan, QLD, AU",APAC,gateway,-23.64682,147.29126
+"Bogota, CO",South America,gateway,4.742491,-74.144777
+"Boise, ID - The Boise GW",North America,gateway,43.581083,-116.289972
+"Boorowa, NSW, AU (GSN#55)",APAC,gateway,-34.46214,148.70558
+"Boucherville, QC, CA - Boucherville GW",North America,gateway,45.566594,-73.425442
+"Boydton, VA",North America,gateway,36.69419444,-78.37572222
+"Bras??lia, BR",South America,gateway,-15.9440139,-47.978775
+"Bridgewater, CT - The Algo of Power GW",North America,gateway,41.545417,-73.354389
+"Bristol, UK",Europe,gateway,51.7058,-2.401694
+"Broadview, IL - The fr fr GW",North America,gateway,41.855028,-87.858944
+"Broken Hill, NSW, AU (GSN#56)",APAC,gateway,-31.99829,141.4411
+"Brooklyn Park, MN - The Purple Rain GW",North America,gateway,45.144028,-93.385778
+"Brooks, AB, CA",North America,gateway,50.5701278,-111.9419889
+"Brucejack, BC, CA",Community Gateways,community_gateway,56.465761,-130.186728
+"Brunswick, ME | Mega",North America,gateway,43.8960833,-69.9234444
+"Buenos Aires-Technopolis, AR | Mega",South America,gateway,-34.563634,-58.509623
+"Bulla Bulling, WA, AU",APAC,gateway,-31.02985,120.81962
+"Burbank, CA - The West Coast Best Coast GW",North America,gateway,34.200111,-118.343833
+"Butte, MT - The Butte GW",North America,gateway,45.924389,-112.51327
+"Cabo San Lucas, MX",North America,gateway,22.91283,-109.92577
+"Cabrero, CL | Mega",South America,gateway,-36.625333,-72.176139
+"Caldera, CL",South America,gateway,-27.02,-70.78797
+"Caleta, DO",North America,gateway,18.45398,-69.66174
+"Calgary, AB, CA - Balzac GW",North America,gateway,51.1818083,-113.9850389
+"Calgary, AB, CA - Janet GW",North America,gateway,50.9988306,-113.9067333
+"Calrossie, NSW, AU",APAC,gateway,-29.0579,150.04031
+"Calverton, NY - Earth Go Hard GW",North America,gateway,40.908914,-72.797608
+"Cama??ari, BR",South America,gateway,-12.74832,-38.28305
+"Campana, Buenos Aires, AR",South America,gateway,-34.1531,-58.9582
+"Canyonleigh, NSW, AU | Mega",APAC,gateway,-34.58374,150.15013
+"Cape Canaveral, FL, US - The Full Send GW",Community Gateways,community_gateway,28.5434208,-80.6666377
+"Cass County, ND",North America,gateway,47.15169444,-97.40888889
+"Cataby, WA, AU",APAC,gateway,-30.84826,115.61927
+"Caucaia, BR | Mega",South America,gateway,-3.7563417,-38.9379194
+"Cebu(?), PH",APAC,gateway,10.296,123.922
+"Centennial, CO - The Centennial GW,",North America,gateway,39.591889,-104.846944
+"Chalfont Grove, UK",Europe,gateway,51.61549,-0.57577
+"Chandigarh, IN",APAC,gateway,30.742,76.819
+"Chantilly, VA - The Willy Nilly Chantilly GW",North America,gateway,38.910194,-77.472722
+"Charcas, MX",North America,gateway,23.22612,-100.97915
+"Charleston, OR / Bandon, OR | Mega",North America,gateway,43.2477105,-124.3839881
+"Charleston, SC",North America,gateway,33.06029444,-80.03823056
+"Chaska, MN - The Sad Saturday GW",North America,gateway,44.851,-93.598
+"Chattanooga, TN - The Shady?€?s Corner GW",North America,gateway,35.031667,-85.2975
+"Chennai, IN",APAC,gateway,13.074,80.312
+"Cheyenne, WY",North America,gateway,41.12708333,-104.9024167
+"Chicago, IL - Chicago Loop GW",North America,gateway,41.876139,-87.631944
+"Chico, CA | Mega",North America,gateway,39.77536,-121.91987
+"Chivilcoy, Buenos Aires, AR",South America,gateway,-34.9204,-60.0677
+"Christchurch, NZ | Mega",APAC,gateway,-43.5587386,172.531418
+"Cikarang Barat, ID - Almat GW | Mega",APAC,gateway,-6.306293,107.096755
+"Cleavedon, NZ | Mega",APAC,gateway,-36.98995,175.05565
+"Clinton, IL | Mega",North America,gateway,40.1764722,-88.8736667
+"Cobargo, NSW, AU",APAC,gateway,-36.38863,149.8914
+"Colburn, ID",North America,gateway,48.34525,-116.4393333
+"Columbus, OH",North America,gateway,40.062602,-82.771037
+"Conrad, MT - The Rad GW",North America,gateway,48.20325,-111.946972
+"Corpus Christi, TX | Mega",North America,gateway,27.7931087,-97.4519272
+"Covilha, PT",Europe,gateway,40.265294,-7.478251
+"Cromwell, NZ",APAC,gateway,-45.061066,169.192756
+"Crossfield, AB, CA",North America,gateway,51.4472056,-114.0217306
+"Cuiab??, BR",South America,gateway,-15.6599028,-55.9829528
+"Da Nang, VT",APAC,gateway,15.9792,108.298
+"Dallas, TX - The First Rodeo | Mega",North America,gateway,32.719528,-96.761861
+"Dallas, TX - The Mavs GW",North America,gateway,32.910778,-96.871472
+"Darwin, NT, AU | Mega",APAC,gateway,-12.432,130.884556
+"Debeque, CO | Mega",North America,gateway,39.28885,-108.20501
+"Delta, UT - The Cosmic Ray GW",North America,gateway,39.346083,-112.589361
+"Denver, CO - The LLAF GW",North America,gateway,39.745667,-104.995417
+"Des Moines, IA",North America,gateway,41.54130556,-93.82580556
+"Des Moines, NM | Mega",North America,gateway,36.69751,-103.79202
+"Douglas, WY - I'm a Business, Man GW",North America,gateway,42.740139,-105.350417
+"Dubois, ID - The InRange GW",North America,gateway,44.170361,-112.225139
+"Dubuque, IA",North America,gateway,42.444611,-90.6785
+"Duluth, MN - The Superior GW",North America,gateway,46.828083,-92.130417
+"Dumas, TX",North America,gateway,35.80797222,-102.0318611
+"Edison, NJ - The Midnight Cowboy GW",North America,gateway,40.521056,-74.345111
+"Edmonton, AB, CA - Edmonton GW",North America,gateway,53.4244722,-113.7078611
+"Egan, MN - The Boiler Room GW",North America,gateway,44.839333,-93.145639
+"El Marques, MX",North America,gateway,20.76082,-100.33556
+"Elbert, CO - Untz Untz GW",North America,gateway,39.291972,-104.505222
+"Elfordstown, IE",Europe,gateway,51.9532,-8.17416
+"Elkton, MD | Mega",North America,gateway,39.6308745,-75.9096542
+"Evanston, WY - The Thou Shall Not Pass GW",North America,gateway,41.092306,-110.842361
+"Fair Park, UT - The This is Fine GW",North America,gateway,40.766917,-111.921167
+"Fairbanks, AK",North America,gateway,64.80516667,-147.5002222
+"Falda del Carmen (Cordoba), AR",South America,gateway,-31.52249,-64.461
+"Fawley, UK",Europe,gateway,50.823297,-1.337705
+Flushing NY - The Game Set Match GW,North America,gateway,40.772,-73.834778
+"Foggia-2, IT | Mega",Europe,gateway,41.433374,15.657053
+"Fort Lauderdale, FL",North America,gateway,26.19086111,-80.19308333
+"Fortaleza, BR | Mega",South America,gateway,-3.735322,-38.461675
+"Fralklin Park, IL - The WMV GW",North America,gateway,41.928778,-87.857444
+"Frankfurt, DE",Europe,gateway,50.3298,8.47082
+"Frederick, MD",North America,gateway,39.39697222,-77.43663889
+"Fremont, CA - The Plaid Mode GW",North America,gateway,37.492056,-121.936722
+"Ft Lauderdale, FL - Miami Sloth GW",North America,gateway,26.191106,-80.193419
+"Gaborone, BW | Mega",Africa,gateway,-24.587645,25.911362
+"Gaffney, SC",North America,gateway,34.98530556,-81.73308333
+"Galapagos, EC",Community Gateways,community_gateway,-0.7451734,-90.3154692
+"Garrettstown, IE",Europe,gateway,51.64498,-8.58805
+"Gazipur, BD | Mega",APAC,gateway,24.0661996,90.2334137
+"Gelida, ES",Europe,gateway,41.438667,1.862452
+"Goodyear, AZ - Estrella Mountain GW",North America,gateway,33.412128,-112.412853
+"Goonhilly, UK",Europe,gateway,50.04964,-5.18143
+"Gordon, GA - The Power Lines GW",North America,gateway,32.841056,-83.253833
+"Grant District, WV - The Huntin Wabbits GW",North America,gateway,38.977972,-79.146556
+"Greenville, PA",North America,gateway,41.43355556,-80.33322222
+"Guarapari, BR",South America,gateway,-20.5578,-40.40863
+"Hamshire, TX",North America,gateway,29.85986111,-94.31233333
+"Harristown, QLD, AU | Mega",APAC,gateway,-27.582083,151.915278
+"Harvey, WA, AU | Mega",APAC,gateway,-33.06775,115.801861
+"Hawkins, TX - The Hawkins GW",North America,gateway,32.613583,-95.29975
+"Hawthorne, CA #2",North America,gateway,33.9201458,-118.3322165
+"Highland Ranch, CO - Highlands Ranch GW",North America,gateway,39.55,-105.033333
+"Hillman, MI",North America,gateway,45.07325,-83.90041667
+"Hillsboro, TX | Mega",North America,gateway,32.0044722,-97.06325
+"Hinds, NZ",APAC,gateway,-44.007406,171.571735
+"Hitachinaka, JP",APAC,gateway,36.38673,140.61372
+"Hitterdal, MN",North America,gateway,46.979357,-96.258413
+"Ho Chi Minh - Hi-Tech Park, VT",APAC,gateway,10.848559,106.800748
+"Ho Chi Minh - Tan Huan, VT",APAC,gateway,10.7564,106.7484
+"Hoo, UK",Europe,gateway,51.419024,0.573512
+"Hoofddorp, NL (GSN#105)",Europe,gateway,52.290758,4.686589
+"Howell, UT - The Full Send GW",North America,gateway,41.836639,-112.435194
+"Hyderabad, IN",APAC,gateway,17.423,78.474
+"Ibi, ES",Europe,gateway,38.60842,-0.6007
+"Ikire, NG",Africa,gateway,7.3875,4.2124
+"Imperatriz, BR | Mega",South America,gateway,-5.4249972,-47.4754667
+"Indore, IN",APAC,gateway,22.678,75.86
+"Inglewood, QLD, AU | Mega",APAC,gateway,-28.416463,151.094997
+"Inman, KS | Mega",North America,gateway,38.229,-97.9219722
+"Iqualuit, NU, CA",Community Gateways,community_gateway,63.75817,-68.53968
+"Irvine, CA - The Zot! Zot! Zot! GW",North America,gateway,33.687222,-117.847861
+"Isle of Man, UK | Mega",Europe,gateway,54.138964,-4.496817
+"Itabora??, BR",South America,gateway,-22.69668,-42.87279
+"Itaitinga, BR | Mega",South America,gateway,-3.8932222,-38.5080833
+"Jashore, BD",APAC,gateway,23.1575,89.2215
+"Jo??o C??mara, BR",South America,gateway,-5.54612,-35.81701
+Juazeiro do Norte. BR,South America,gateway,-7.2151194,-39.3367222
+"Kahnawake, QC, CA - Kahanawake GW",North America,gateway,45.40165,-73.6396
+"Kalama, WA",North America,gateway,46.0389722,-122.8082222
+"Kauai, HI - I am McLovin GW",North America,gateway,21.999361,-159.378028
+"Kaunas, LT",Europe,gateway,54.87,24.01
+"Kenansville, FL | Mega",North America,gateway,27.8760056,-81.0304861
+"Kendari, ID",APAC,gateway,-3.977445,122.511309
+"Kent, WA - The Cascade GW",North America,gateway,47.421056,-122.248139
+"Ketchikan, AK",North America,gateway,55.3737,-131.7189889
+"Ki Ki, SA, AU",APAC,gateway,-35.57172,139.8174
+"Kidman Park, SA, AU | Mega",APAC,gateway,-34.9089,138.5327
+"Kigali, RW",Africa,gateway,-1.967893,30.135317
+"Kigali, RW",Community Gateways,community_gateway,-1.9445274,30.0896123
+"Killala, IE",Europe,gateway,54.194077,-9.2114458
+"Kolkata, IN",APAC,gateway,22.511,88.358
+"Koonwarra, VIC, AU",APAC,gateway,-38.51812,145.95145
+"Krosrae, Micronesia",Community Gateways,community_gateway,5.3253902,163.0126326
+"Kuala Lumpur(?), MY",APAC,gateway,3.0203,101.3666
+"Kuparuk, AK",North America,gateway,70.3176667,-148.9411944
+"Kuujjuaq, QC, CA",Community Gateways,community_gateway,58.1097412,-68.3958043
+"La Plata, Buenos Aires, AR",South America,gateway,-34.9213,-57.9545
+"Las Condes, CL | Mega",South America,gateway,-33.406611,-70.492628
+"Lauro de Freitas, BR | Mega",South America,gateway,-12.8279778,-38.3539833
+"Lawrence, KS",North America,gateway,39.01388889,-95.14938889
+"Lekki, NG",Africa,gateway,6.449526175,3.587733892
+"Lepe, ES",Europe,gateway,37.255557,-7.236135
+"Leuk, CH",Europe,gateway,46.317491,7.646044
+"Lihir, PG",Community Gateways,community_gateway,-3.106,152.653
+"Lima-2, PE",South America,gateway,-12.086933,-76.975218
+"Limache, CL | Mega",South America,gateway,-32.973806,-71.295694
+"Lindon, UT - The Gong GW",North America,gateway,40.332722,-111.731167
+"Lisle, IL - The ChiTown GW",North America,gateway,41.800642,-88.096092
+Litchfield CT,North America,gateway,41.54502778,-73.35402778
+"Lithia Springs, GA - The Georgia Peaches GW",North America,gateway,33.745917,-84.5795
+"Llano Grande, MX",North America,gateway,19.25892,-99.58115
+"Lobatse, BW | Mega",Africa,gateway,-25.259502,25.705696
+"Lockport, NY",North America,gateway,43.16655556,-78.75511111
+"Loeches (Madrid), ES | Mega",Europe,gateway,40.400965,-3.405882
+"Loring, ME",North America,gateway,46.91491667,-67.91952778
+"Los Angeles, CA - Anotha One' in GW",North America,gateway,33.924306,-118.318444
+"Los Angeles, CA - The Lebron GW",North America,gateway,34.047861,-118.255667
+"Los Angeles, CA - The Send it! GW",North America,gateway,34.058056,-118.235417
+"Los Angeles, CA - Yet Another HT GW",North America,gateway,33.924056,-118.321028
+"Lucknow, IN",APAC,gateway,26.881,80.91
+"Lunenberg, VT",North America,gateway,44.41202778,-71.73183333
+"Luz, BR",South America,gateway,-19.80334,-45.68113
+"Lynnwood, WA - Mountain is Out GW",North America,gateway,47.841694,-122.300944
+"Macquarie Park, NSW, AU | Mega",APAC,gateway,-33.785441,151.131806
+"Madera, CA - The Madera GW",North America,gateway,36.858778,-119.9105
+"Majura, ACT, AU | Mega",APAC,gateway,-35.318363,149.245865
+"Makassar, ID",APAC,gateway,-5.173028,119.43325
+"Malaga, WA, AU | Mega",APAC,gateway,-31.864147,115.895866
+"Manaus, BR",South America,gateway,-2.92674,-59.99778
+"Mandale, NC",North America,gateway,35.895778,-79.226722
+"Manistique, MI",North America,gateway,45.90861111,-86.48358333
+"Marathon, FL - The Florida Keys GW",North America,gateway,24.713444,-81.087694
+"Marathon, ON, CA (GSN-19)",North America,gateway,48.7253692,-86.3745279
+"Marcell, MN",North America,gateway,47.59316667,-93.69252778
+"Marsala, IT",Europe,gateway,37.794324,12.493115
+"Marshall, TX | Mega",North America,gateway,32.53225,-94.4303056
+"Matola, MZ | Mega",Africa,gateway,-25.920692,32.415005
+"Mazahua, MX",North America,gateway,16.60965,-94.96423
+"McGregor, TX",North America,gateway,31.4049167,-97.4381389
+"Medellin(?), CO",South America,gateway,6.106,-75.498
+"Mendoza, AR | Mega",South America,gateway,-32.931488,-68.81049
+"Merauke, ID",Community Gateways,community_gateway,-8.488211,140.387901
+"Merida, MX",North America,gateway,21.007372,-89.643944
+"Merredin, WA, AU | Mega",APAC,gateway,-31.495634,118.283286
+"Merrillan, WI",North America,gateway,44.40633333,-90.81427778
+"Mesa, AZ - The Booker GW",North America,gateway,33.421167,-111.85925
+"Miami, FL - Club Space GW",North America,gateway,25.782647,-80.193158
+"Miami, FL - ULTRA Are You Ready GW",North America,gateway,25.7915,-80.379694
+"Milan, IT | Mega",Europe,gateway,45.475003,9.038742
+"Milwaukee, WI - The Cheese Head GW",North America,gateway,43.15125,-88.008778
+"Minneapolis, MN - Winter is Coming GW",North America,gateway,44.970889,-93.254389
+"Molokai, HI",North America,gateway,21.1127,-157.06323
+"Monterey, MX",North America,gateway,25.77016,-100.30188
+"Montes Carlos, BR",South America,gateway,-16.68367,-43.83329
+"Montreal, QC, CA - St Laurent GW",North America,gateway,45.487636,-73.742378
+"Morn Hill, UK",Europe,gateway,51.060168,-1.263883
+"Mossor??, BR",South America,gateway,-5.15695,-37.35373
+"Mt Ayr, IN | Mega",North America,gateway,40.9264444,-87.2953611
+"Muallim, TR",Europe,gateway,40.78875,29.50939
+"Mumbai, IN",APAC,gateway,19.126,72.904
+"Murrieta, CA",North America,gateway,33.5321667,-117.1796389
+"Myrtle Beach, SC - The Gone Golfing GW",North America,gateway,33.709972,-78.895833
+"Nabiac, NSW, AU | Mega",APAC,gateway,-32.097118,152.372562
+"Nairobi, KE - Cabanas | Mega",Africa,gateway,-1.329119,36.88643
+"Nairobi, KE - Karen | Mega",Africa,gateway,-1.3502338,36.750317
+"Nauru, NR",Community Gateways,community_gateway,-0.52913,166.91773
+"Nemaha, NE",North America,gateway,40.33366667,-95.81527778
+"New Braunfels, TX | Mega",North America,gateway,29.7840556,-98.050778
+"New York, NY - The New York, New Me GW",North America,gateway,40.711278,-74.001389
+"New York, NY - The Shea GW",North America,gateway,40.72,-74.00475
+"New York, NY - The Slice Slice Baby GW",North America,gateway,40.717806,-74.00825
+"Niland, CA | Mega",North America,gateway,33.2204867,-115.4668146
+"Ningi, QLD, AU | Mega",APAC,gateway,-27.068417,153.05476
+"Noida, IN",APAC,gateway,28.531,77.394
+"Nome, AK, US",Community Gateways,community_gateway,64.5035,-165.4283056
+"Norcross, GA",North America,gateway,33.9549722,-84.1979722
+"North Bend, WA",North America,gateway,47.48238889,-121.7623333
+"North Kansas City, MO - The BBQ GW",North America,gateway,39.127156,-94.579344
+"North Miami, FL - The United Teleports GW",North America,gateway,25.949611,-80.191806
+"Northlake, IL - The StressX GW",North America,gateway,41.920028,-87.911333
+"Nova Santa Rita, BR",South America,gateway,-29.8428556,-51.2845
+"Noviciado, CL",South America,gateway,-33.39272,-70.88325
+"Nueva Vizcaya (Province), PH",APAC,gateway,16.423,121.114
+"Oistins, BB",North America,gateway,13.062759,-59.537583
+"Okun Ajah (Lagos), NG | Mega",Africa,gateway,6.425758,3.645496
+"Olympia, WA",North America,gateway,46.9155278,-122.8135278
+"Onslow, WA, AU",APAC,gateway,-21.645295,115.130406
+"Osasco, BR | Mega",South America,gateway,-23.490533,-46.775014
+"Otaru, JP",APAC,gateway,43.173215,141.258373
+"Oxford, AL - The Super Speedway GW",North America,gateway,33.593639,-85.876833
+"Palangka Raya, ID",APAC,gateway,-2.21866,113.925406
+"Panaca, NV",North America,gateway,37.7836389,-114.6926944
+"Passa Quatro, BR",South America,gateway,-22.34929,-44.94544
+"Pe??uelas, MX",North America,gateway,21.73139,-102.27531
+"Perry, FL",North America,gateway,30.061583,-83.580528
+"Petra Jaya, MY",APAC,gateway,1.606503,110.340002
+"Phoenix, AZ - The X GW",North America,gateway,33.684056,-112.09825
+"Pimba, SA, AU (GSN#3023)",APAC,gateway,-31.2507,136.80107
+"Piura, PE | Mega",South America,gateway,-5.159689,-80.687549
+"Plana, BG",Europe,gateway,42.482909,23.44491
+"Ponce, PR",North America,gateway,18.06197778,-66.54783611
+"Port Harrcourt, Rivers, NG",Africa,gateway,4.8335,7.0401
+"Port Matilda, PA | Mega",North America,gateway,40.8061944,-77.9959444
+"Port Melbourne, VIC, AU | Mega",APAC,gateway,-37.823009,144.91539
+"Port St. Lucie, FL - The PSL GW",North America,gateway,27.281278,-80.483139
+"Porto Alegre, BR",South America,gateway,-29.9842,-51.12088
+"Pott?€?s Junction, GU - The Katu Gato Community GW",North America,gateway,13.616361,144.858722
+"Presidente Prudente, BR",South America,gateway,-22.1461,-51.47411
+"Prosser, WA | Mega",North America,gateway,46.12686111,-119.684
+"Pudahuel, CL | Mega",South America,gateway,-33.449139,-70.850806
+"Puerto Montt, CL",South America,gateway,-41.48657,-73.02337
+"Puerto Saavedra, CL",South America,gateway,-38.81476,-73.39724
+"Pune, IN",APAC,gateway,18.535,73.786
+"Punta Arenas, CL",South America,gateway,-52.93974,-70.85045
+"Punta Gorda, FL - The Florida Man GW",North America,gateway,27.020028,-81.763806
+"Puwera, NZ",APAC,gateway,-35.7935,174.30075
+"Queretaro, MX | Mega",North America,gateway,20.57346,-100.273996
+"Quezon (province), PH",APAC,gateway,13.953,121.699
+"Quilicura, CL | Mega",South America,gateway,-33.348669,-70.702714
+"Quincy, WA",North America,gateway,47.2378056,-119.8891389
+"Quixad??, BR",South America,gateway,-4.9632222,-39.0373333
+"Rajshahi, BD | Mega",APAC,gateway,24.371136,88.560592
+"Redmond, WA | Mega",North America,gateway,47.69627778,-122.0353056
+"Richardson, TX - The Name Loading GW",North America,gateway,32.964972,-96.711833
+"Rio de Janeiro, BR",South America,gateway,-22.8110167,-43.3511917
+"Rio Negro, AR",South America,gateway,-40.3887,-65.2023
+"Rio Negro, BR",South America,gateway,-26.08857,-49.79286
+"Robbins, CA",North America,gateway,38.875,-121.7070556
+"Roberts, WI | Mega",North America,gateway,44.9410278,-92.5160278
+"Robertsdale, AL",North America,gateway,30.567,-87.646
+"Rol??ndia, BR",South America,gateway,-23.337575,-51.331039
+"Rolette, ND",North America,gateway,48.66036111,-99.81052778
+"Roll, AZ - They See Me Rollin GW",North America,gateway,32.815278,-113.797389
+"Romulus, NY | Mega",North America,gateway,42.7881111,-76.8633056
+"S??o Gon??alo do Amarante, BR",South America,gateway,-3.67468,-39.10287
+"Sagamu, Ogun, NG",Africa,gateway,6.8655,3.647
+"Saguenay, QC, CA",North America,gateway,48.3136647,-70.9088518
+"Sainte-Catherine, QC, CA",North America,gateway,45.3924611,-73.5993194
+"Sale, VIC, AU | Mega",APAC,gateway,-38.096672,147.09117
+"Salta, AR",South America,gateway,-24.8047,-65.4424
+"Sambro Creek, NS, CA (GSN-21)",North America,gateway,44.4645332,-63.6131209
+"San Antonio, TX",North America,gateway,29.4115556,-98.8072778
+"San Bernardo, CL | Mega",South America,gateway,-33.660278,-70.739639
+"San Clemente, CL",South America,gateway,-35.55593,-71.3569
+"San Jose, CA - The Definitely Not A Hawthorne GW",North America,gateway,37.242194,-121.784389
+"San Jose, CA - The Middle Out GW",North America,gateway,37.242139,-121.7815
+"San Jose, CA - The Walsh GW",North America,gateway,37.370444,-121.969167
+Sanderson TX,North America,gateway,30.193753,-102.889981
+"Sandston, VA - The Homie Keith GW",North America,gateway,37.490139,-77.246139
+"Santa Clara, CA - The Bang Bang Niner GW",North America,gateway,37.399194,-121.980333
+"Santa Elena, CL",South America,gateway,-29.99974,-71.2582
+"Santa Olalla, ES",Europe,gateway,40.025428,-4.467699
+"Santana de Parna??ba, BR",South America,gateway,-23.45641,-46.94226
+"Santiago de los Caballeros, DO",North America,gateway,19.48096,-70.72656
+"Savanna, OK | Mega",North America,gateway,34.78930556,-95.8765
+"Savannah, TN | Mega",North America,gateway,35.1595,-88.0613056
+"Seatle, WA - The Emerald City GW",North America,gateway,47.614472,-122.339
+"Seattle, WA - Seattle Freeze GW",North America,gateway,47.583194,-122.325111
+"Seattle, WA -The Kremwerk GW",North America,gateway,47.619,-122.336417
+"Secaucus, NJ - The DAVI GW",North America,gateway,40.785472,-74.068611
+"Sellheim, QLD, AU",APAC,gateway,-19.999722,146.42166
+"Shakopee, MN - The Let's Goooo GW",North America,gateway,44.779667,-93.462667
+"Sheffield, IL | Mega",North America,gateway,41.3612222,-89.7433056
+"Singapore, SG | Mega",APAC,gateway,1.397598,103.83539
+"Slope County, ND",North America,gateway,46.40793,-103.114656
+"Sofia, BG",Europe,gateway,42.67197,23.383992
+"Springbrook Creek, NSW, AU",APAC,gateway,-30.43981,149.68385
+"Springer, OK",North America,gateway,34.2685,-97.21316667
+"St Johns, NL, CA",North America,gateway,47.560921,-52.7754993
+"Staten Island, NY - The Staten Island GW",North America,gateway,40.606806,-74.17475
+"Sterling, VA - The Schedule Chicken GW",North America,gateway,38.984992,-77.423883
+"Stolnik, BG | Mega",Europe,gateway,42.72231,23.616678
+"Strathmore, AB, CA - Strathmore GW",North America,gateway,51.0080611,-113.0731611
+"Sullivan, ME",North America,gateway,44.53097222,-68.224
+"Surubim, BR",South America,gateway,-7.85393,-35.78008
+"Suva, FJ",APAC,gateway,-18.12915,178.46767
+"Tapachula, MX",North America,gateway,14.7862,-92.36717
+"Tawara Is, Kiribati",Community Gateways,community_gateway,1.3323183,173.0040641
+"Te Hana, NZ | Mega",APAC,gateway,-36.23683,174.512691
+"Te Kuiti, NZ | Mega",APAC,gateway,-38.302618,175.1446264
+"Tea Gardens, NSW, AU",APAC,gateway,-32.59316,152.10422
+"Tennant Creek, NT, AU",APAC,gateway,-19.6974,134.1763
+"Terang, VIC, AU | Mega",APAC,gateway,-38.243179,142.92862
+"The Dalles, OR",North America,gateway,45.63061111,-121.2036667
+"Thika, KE | Mega",Africa,gateway,-1.0414784,37.102569
+"Thomaston, GA - The Blitz GW",North America,gateway,32.947083,-84.261806
+"Tionesta, CA / Tulake, CA",North America,gateway,41.644,-121.3299722
+"Toa Baja, PR",North America,gateway,18.4310556,-66.1920861
+"Toonpan, QLD, AU",APAC,gateway,-19.51872,146.87371
+"Torrumbarry, VIC, AU",APAC,gateway,-36.02526,144.50011
+"Tracy City, TN",North America,gateway,35.19725,-85.666
+"Tucson, AZ - The Bear Down GW",North America,gateway,32.170139,-110.957694
+"Tukwila, WA - The Tukwila Gateway",North America,gateway,47.508889,-122.299361
+"Tumon, GU",North America,gateway,13.5028056,144.8051944
+"Tuvalu, TV",Community Gateways,community_gateway,-8.5266967,179.192599
+"Umm Qarn, QA | Mega",Middle East,gateway,25.551788,51.439281
+"Unalaska, AK, US",Community Gateways,community_gateway,53.8602778,-166.5048611
+"Uruguaiana, BR",South America,gateway,-29.76549,-56.52698
+"Vandenberg CA, US - The ""Vandenberg AFB"" GW",North America,gateway,34.71925,-120.532503
+"Vernon, UT - The Pain Train GW",North America,gateway,40.075694,-112.354944
+"Villahermosa, MX",North America,gateway,18.04083,-92.93282
+"Villamaggiore-2, IT | Mega expansion",Europe,gateway,45.313654,9.184644
+"Villarejo de Salvanes, ES",Europe,gateway,40.16758,-3.2869
+"Villenave d?€?Ornon, FR",Europe,gateway,44.78096,-0.53738
+"Vinhedo, BR",South America,gateway,-23.0771472,-47.0119861
+"Virginia Beach, VA - The Lil b GW",North America,gateway,36.783806,-76.009278
+"Wagin, WA, AU (GSN#3002)",APAC,gateway,-33.30829,117.34339
+"Waipara, NZ | Mega",APAC,gateway,-43.063767,172.747443
+"Wamena, ID",Community Gateways,community_gateway,-4.095558,138.942714
+"Warra, QLD, AU",APAC,gateway,-26.9079883,150.8916042
+"Warren, MO",North America,gateway,38.6351667,-91.1160278
+"Watkins, CO - The Solar GW",North America,gateway,39.75825,-104.617028
+"Watonwan, MN - the La Salle GW | Mega",North America,gateway,44.051506,-94.534614
+"Weehawken, NJ - The Cake Boss GW",North America,gateway,40.761611,-74.025278
+"Wellington, UT - The Utah Jazz GW",North America,gateway,39.540083,-110.692833
+"Wellington, VA - East Coast Bestest GW",North America,gateway,38.777056,-77.546583
+"West Footscray, VIC, AU | Mega",APAC,gateway,-37.803925,144.8644
+"West Jordan, UT - The Eye of Sauron GW",North America,gateway,40.61975,-111.986333
+Westbury NY - Take Me Home GW,North America,gateway,40.755856,-73.55785
+"Wherstead, UK",Europe,gateway,52.019224,1.14354
+"Wichita Falls, TX",North America,gateway,33.85225,-98.60411111
+"Willemstad, CW",North America,gateway,12.097686,-68.908109
+"Willows. QLD, AU",APAC,gateway,-23.66665,147.5025
+"Wise, NC",North America,gateway,36.47114,-78.17313
+"Wise, VA - The Wise GW",North America,gateway,36.977333,-82.528
+"Wola Krobowska, PL",Europe,gateway,51.86417,20.92105
+"Woodville, NZ | Mega",APAC,gateway,-40.352083,175.866806
+"Woodwalton, UK",Europe,gateway,52.404967,-0.219117
+"Yamaguchi, JP",APAC,gateway,34.2171,131.55566
+"York, PA | Mega",North America,gateway,39.9691111,-76.7230278

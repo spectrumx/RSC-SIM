@@ -1,26 +1,39 @@
 """
-RFI modeling for AMSU-A sensor for NWP data biasing.
+RFI modeling for AMSU-A for NWP data biasing (5G + Starlink ground gateways).
 
-Computes 5G ground-emitter RFI for all FOVs in AMSU-A netCDF-4 files. Each nc4 contains
-data from multiple satellites (NOAA-15/18/19, METOP-B/C); SAID identifies the satellite
-per observation. ECEF lookups are loaded per satellite from the sensor directory.
-Runs a parametric study over AMSU-A channels 3–8.
+Computes (1) 5G ground-emitter RFI via second harmonic in band and (2) Starlink
+ground-gateway RFI (direct at channel center) for all FOVs in AMSU-A netCDF-4 files.
+Each nc4 may contain multiple satellites (NOAA-15/18/19, METOP-B/C); SAID identifies
+the satellite per observation. Parametric study over AMSU-A channels 3–8.
+
+Execution order: all 5G channels first, then all Starlink gateway channels. Outputs
+per-source per-channel CSVs and combined CSVs, unified top-5 text
+(``*_5G_Starlink_Gateway_top5.txt``), and summed Tb combined CSV
+(``*_5G_Starlink_Gateway_RFI_combined.csv``).
+
+Full ITU-R P.676 atmospheric absorption; no polarization loss, terrain masking, or
+OOBE for 5G. Cloud/rain slant attenuation scales summed RFI into ``TMBR`` and is in ``CLOUD_RAIN_ATT`` (dB).
 
 Usage:
-  python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 path [--out_dir dir]
-  e.g.:
-  python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 util/AMSU-A/amsua_2023080112.nc4 --out_dir util/AMSU-A
-  Output: <out_dir>/<nc4_stem>_5G_RFI_chN.csv (timestamp, satellite, lat, lon, saza, rfi_dBW, rfi_Tb).
+  python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 path [--out_dir dir] [--gateways_csv path]
 
-Author: Weather Satellite RFI / NWP Team
+  python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 util/AMSU-A/amsua_2023080112.nc4 --out_dir util/AMSU-A
+
+Also writes ``<stem>_RFI.nc4``: ``TMBR`` (updated long_name) + summed RFI Tb on ch 3–8 after cloud/rain factor;
+``CELL_RFI`` / ``GATE_RFI`` hold 5G-only and gateway-only Tb (K) on a compact channel axis (ch 3–8 only);
+``CLOUD_RAIN_ATT`` (dB) on the same axis; channel dim ``nchans_rfi`` (Panoply defaults like ``nchans``);
+coordinate ``channel_index_rfi`` gives instrument channel per index. Top-5 attenuated Tb:
+``*_5G_Starlink_Gateway_Attenuation_top5.txt``.
 """  # noqa: E501
 
 import argparse
 import os
 import sys
 import time as time_module
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 # Add src to path
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -29,12 +42,24 @@ sys.path.insert(0, _src_dir)
 
 from netCDF4 import Dataset  # noqa: E402
 
+from attenuation_mdl import (  # noqa: E402
+    atten_db_to_by_channel_dict,
+    compute_cloud_rain_atten_db_for_fovs,
+    itu_iclw_rain_info_nc_path,
+)
+from starlink_gateway_mdl import (  # noqa: E402
+    load_starlink_gateways,
+    load_starlink_gateway_antenna_from_csv,
+    model_rfi_nwp_starlink_gateway_single_time,
+    model_rfi_nwp_starlink_gateway_single_time_in_fov_first,
+)
 from weather_sat_mdl import (  # noqa: E402
     create_5g_sector_antenna_pattern,
     load_weather_sat_antenna_from_csv,
 )
 from weather_sat_nwp import (  # noqa: E402
     combine_channel_csvs,
+    copy_nc4_with_tmbr_plus_rfi,
     get_emitter_density_vectorized,
     iter_valid_ts_sat_indices,
     load_ecef_lookups_for_nc4,
@@ -42,15 +67,14 @@ from weather_sat_nwp import (  # noqa: E402
     said_to_satellite_array,
     SENSOR_ALLOWED_SAIDS,
     SENSOR_SAID_TO_SATELLITE,
+    sum_two_rfi_combined_csvs_by_channel,
     timestamp_from_nc4_vars,
+    write_attenuated_combined_rfi_top5_file,
 )
 
 # =============================================================================
-# Configuration (override with CLI)
+# Configuration (override with CLI where applicable)
 # =============================================================================
-
-# directory that has data files (relative to this script)
-DATA_DIR = os.path.join(_script_dir, "data")
 
 # V-band (50–55.5 GHz), AMSU-A Ch 3–8: parametric study over channels
 # Each entry: (channel_number, center_freq_Hz, bandwidth_Hz). Use Hz, not GHz
@@ -73,6 +97,17 @@ emitter_fundamental_hz_list = [
     AMSUA_CHANNEL_CONFIGS[5][1] / 2.0,  # Ch 8
 ]
 
+# Gateway center frequency (Hz) per channel; one element per AMSUA_CHANNEL_CONFIGS entry, same order.
+# Direct RFI at channel center: default = AMSU-A channel center frequency. Use Hz, not GHz.
+gateway_center_freq_hz_list = [
+    AMSUA_CHANNEL_CONFIGS[0][1] / 1,  # Ch 3
+    AMSUA_CHANNEL_CONFIGS[1][1] / 1,  # Ch 4
+    AMSUA_CHANNEL_CONFIGS[2][1] / 1,  # Ch 5
+    AMSUA_CHANNEL_CONFIGS[3][1] / 1,  # Ch 6
+    AMSUA_CHANNEL_CONFIGS[4][1] / 1,  # Ch 7
+    AMSUA_CHANNEL_CONFIGS[5][1] / 1,  # Ch 8
+]
+
 # 5G sector antenna
 # ITU-R M.2101 and 3GPP standards recommend 24 - 25 dBi for 5G sector antenna with standard 8x8 phased array
 GROUND_EMITTER_GAIN_MAX = 24.5  # dBi
@@ -86,12 +121,22 @@ TRANSMIT_POWER_DBW = -33
 # EIRP (bore sight) = TRANSMIT_POWER_DBW + GROUND_EMITTER_GAIN_MAX = -8.5 dBW
 EIRP_PER_EMITTER_DBW = TRANSMIT_POWER_DBW + GROUND_EMITTER_GAIN_MAX
 
-# Atmospheric defaults for ITU-R P.676
+# Starlink ground gateway
+EIRP_PER_GATEWAY_DBW = 70.5
+N_ANTENNAS_PER_GATEWAY = 40
+# Starlink gateway: default random boresight in starlink_gateway_mdl; legacy = bore sight at sat
+GATEWAY_BORESIGHT_POINTING = True
+GATEWAY_GAIN_MAX = 24.5
+GATEWAY_HORIZ_BW = 65.0
+GATEWAY_VERT_BW = 10.0
+GATEWAY_ETA_RAD = 0.8
+
+# Atmopheric defaults for ITU-R P.676
 TEMPERATURE_K = 288.15
 PRESSURE_PA = 101325.0
 HUMIDITY_PCT = 50.0
 
-# nc4 variable names (Satellite_Info_DK1 AMSU-A CSV.csv)
+# netCDF-4 (.nc4) variable names
 VAR_LAT = "LAT"
 VAR_LON = "LON"
 VAR_SAZA = "SAZA"
@@ -105,6 +150,15 @@ VAR_MINU = "MINUTE"
 VAR_SECO = "SECOND"
 VAR_SAID = "SAID"
 SENSOR_NAME = "AMSU-A"
+
+RFI_PREFIX_5G = "5G"
+RFI_PREFIX_STARLINK = "Starlink_Gateway"
+TOP5_STEM = "5G_Starlink_Gateway"
+COMBINED_SUM_PREFIX = "5G_Starlink_Gateway"
+
+TMBR_N_CHANNELS = 15
+
+CLOUD_RAIN_ICLW_ABS_THRESHOLD = 0.05
 
 
 def _read_nc4_var(ds, name: str, fallback_name: str = None):
@@ -199,7 +253,7 @@ def load_amsua_nc4_and_build_arrays(nc4_path: str):
     }
 
 
-def run_rfi_for_channel(
+def run_rfi_for_channel_5g(
     data: dict,
     density: np.ndarray,
     ecef_by_satellite: dict,
@@ -212,7 +266,7 @@ def run_rfi_for_channel(
     out_csv: str,
     sensor_name: str = "AMSU-A",
 ):
-    """Run RFI model for one AMSU-A channel; write CSV with timestamp, satellite, lat, lon, saza, rfi_dBW, rfi_Tb."""
+    """Run 5G RFI model for one AMSU-A channel; write CSV."""
     lat = data["lat"]
     lon = data["lon"]
     saza = data["saza"]
@@ -220,7 +274,10 @@ def run_rfi_for_channel(
     satellite = data["satellite"]
     altitude_m = data["altitude_m"]
     n_obs = data["n_obs"]
-    allowed = set(SENSOR_SAID_TO_SATELLITE[sensor_name][said] for said in SENSOR_ALLOWED_SAIDS[sensor_name])
+    allowed = set(
+        SENSOR_SAID_TO_SATELLITE[sensor_name][said]
+        for said in SENSOR_ALLOWED_SAIDS[sensor_name]
+    )
 
     rfi_dBW = np.full(n_obs, -300.0)
     rfi_K = np.full(n_obs, 0.0)
@@ -250,7 +307,6 @@ def run_rfi_for_channel(
         rfi_dBW[idx] = rfi_db
         rfi_K[idx] = rfi_tb
 
-    import pandas as pd
     df = pd.DataFrame({
         "timestamp": timestamps,
         "satellite": satellite,
@@ -265,26 +321,167 @@ def run_rfi_for_channel(
     return df
 
 
+def run_rfi_for_channel_starlink_gateway(
+    data: dict,
+    gateway_lat: np.ndarray,
+    gateway_lon: np.ndarray,
+    ecef_by_satellite: dict,
+    v_band_antenna,
+    gateway_antenna,
+    channel_num: int,
+    center_freq_hz: float,
+    bandwidth_hz: float,
+    out_csv: str,
+    sensor_name: str = "AMSU-A",
+    chunk_size: int = 200000,
+    gateway_bbox_margin_deg: float = 1.0,
+    in_fov_first: bool = True,
+    gateway_random_boresight: bool = True,
+    gateway_boresight_pointing: bool = True,
+    gateway_boresight_random_seed: int | None = None,
+):
+    """Run Starlink gateway RFI for one AMSU-A channel; write CSV (same columns as 5G)."""
+    lat = data["lat"]
+    lon = data["lon"]
+    saza = data["saza"]
+    timestamps = data["timestamps"]
+    satellite = data["satellite"]
+    altitude_m = data["altitude_m"]
+    n_obs = data["n_obs"]
+    allowed = set(
+        SENSOR_SAID_TO_SATELLITE[sensor_name][said]
+        for said in SENSOR_ALLOWED_SAIDS[sensor_name]
+    )
+
+    rfi_dBW = np.full(n_obs, -300.0)
+    rfi_K = np.full(n_obs, 0.0)
+
+    _model = (
+        model_rfi_nwp_starlink_gateway_single_time_in_fov_first
+        if in_fov_first
+        else model_rfi_nwp_starlink_gateway_single_time
+    )
+    for ts, sat, idx, coords in iter_valid_ts_sat_indices(
+        timestamps, satellite, allowed, ecef_by_satellite
+    ):
+        sat_ecef_km = np.array(coords, dtype=np.float64)
+        rfi_db, rfi_tb = _model(
+            sat_ecef_km,
+            lat[idx],
+            lon[idx],
+            saza[idx],
+            altitude_m,
+            gateway_lat,
+            gateway_lon,
+            v_band_antenna,
+            gateway_antenna,
+            freq_hz=center_freq_hz,
+            bandwidth_hz=bandwidth_hz,
+            eirp_per_gateway_dbw=EIRP_PER_GATEWAY_DBW,
+            n_antennas_per_gateway=N_ANTENNAS_PER_GATEWAY,
+            gateway_random_boresight=gateway_random_boresight,
+            gateway_boresight_pointing=gateway_boresight_pointing,
+            gateway_boresight_random_seed=gateway_boresight_random_seed,
+            temperature=TEMPERATURE_K,
+            pressure=PRESSURE_PA,
+            humidity=HUMIDITY_PCT,
+            sensor_name=sensor_name,
+            chunk_size=chunk_size,
+            gateway_bbox_margin_deg=gateway_bbox_margin_deg,
+        )
+        rfi_dBW[idx] = rfi_db
+        rfi_K[idx] = rfi_tb
+
+    df = pd.DataFrame({
+        "timestamp": timestamps,
+        "satellite": satellite,
+        "lat": np.round(lat, 6),
+        "lon": np.round(lon, 6),
+        "saza": np.round(saza, 6),
+        "rfi_power_dBW": np.round(rfi_dBW, 3),
+        "rfi_brightness_temperature_K": [f"{x:.3e}" for x in rfi_K],
+    })
+    df.to_csv(out_csv, index=False)
+    print(f"  Wrote {out_csv} ({len(df):,} rows)")
+    return df
+
+
+def _append_top5_block(top5_file, ch_header: str, df: pd.DataFrame):
+    rfi_K_float = df["rfi_brightness_temperature_K"].astype(float)
+    idx_top5 = rfi_K_float.abs().nlargest(5).index
+    top5_file.write(f"\n{ch_header}\n")
+    print("  Top 5 by |rfi_brightness_temperature_K|:")
+    top5_file.write("  Top 5 by |rfi_brightness_temperature_K|:\n")
+    for rank, row_idx in enumerate(idx_top5, start=1):
+        row = df.loc[row_idx]
+        line = (
+            f"    [{rank}] satellite: {row['satellite']}, lat: {row['lat']}, lon: {row['lon']}, "
+            f"saza: {row['saza']}, rfi_power_dBW: {row['rfi_power_dBW']}, "
+            f"rfi_Tb_K: {row['rfi_brightness_temperature_K']}"
+        )
+        print(line)
+        top5_file.write(line + "\n")
+
+
 def main():
     t_start = time_module.perf_counter()
     parser = argparse.ArgumentParser(
-        description="AMSU-A RFI modeling for NWP (5G ground emitters only; multi-satellite per nc4)."
+        description=(
+            "AMSU-A RFI for NWP: 5G (harmonic) and Starlink ground gateways (direct); "
+            "multi-satellite per nc4."
+        )
     )
     parser.add_argument(
         "--sensor",
         required=True,
         metavar="SENSOR",
-        help="Sensor name (e.g. AMSU-A); used for SAID mapping and data directory.",
+        help="Sensor name (e.g. AMSU-A); used for SAID mapping.",
     )
     parser.add_argument(
         "--nc4",
         required=True,
-        help="Path to AMSU-A netCDF-4 file (e.g. util/AMSU-A/amsua_2023080112.nc4). ECEF lookups from same dir.",
+        help="Path to AMSU-A netCDF-4 file. ECEF lookups from same dir.",
     )
     parser.add_argument(
         "--out_dir",
         default=None,
         help="Output directory for RFI CSVs (default: same directory as nc4 file).",
+    )
+    parser.add_argument(
+        "--gateways_csv",
+        default=None,
+        help=(
+            "Path to Starlink gateways CSV (lat, lon). "
+            "Default: research_tutorials/data/starlink_gateways_geolocations.csv"
+        ),
+    )
+    parser.add_argument(
+        "--chunk_size",
+        type=int,
+        default=200000,
+        help="FOV chunk size for gateway in-FOV / link budget (default 200000).",
+    )
+    parser.add_argument(
+        "--no_gateway_bbox",
+        action="store_true",
+        help="Disable gateway lat/lon bounding-box filter (slower; debugging).",
+    )
+    parser.add_argument(
+        "--attenuation_first",
+        action="store_true",
+        help="Gateway: ITU-R before in-FOV mask. Default is in-FOV-first.",
+    )
+    parser.add_argument(
+        "--legacy_gateway_boresight_at_satellite",
+        action="store_true",
+        help="Gateway: bore sight at satellite (gain 1). Default: random az/el + sector pattern.",
+    )
+    parser.add_argument(
+        "--gateway_boresight_random_seed",
+        type=int,
+        default=None,
+        metavar="SEED",
+        help="Optional RNG seed for gateway random boresight.",
     )
     args = parser.parse_args()
 
@@ -297,9 +494,15 @@ def main():
 
     ecef_by_satellite = load_ecef_lookups_for_nc4(args.nc4)
     if not ecef_by_satellite:
-        print(f"ERROR: No ECEF lookup CSVs found for {args.nc4} (expect *_ECEF_lookup_<stem>.csv in same dir)")
+        print(
+            f"ERROR: No ECEF lookup CSVs found for {args.nc4} "
+            "(expect *_ECEF_lookup_<stem>.csv in same dir)"
+        )
         sys.exit(1)
     print(f"  Loaded ECEF lookups for satellites: {list(ecef_by_satellite.keys())}")
+
+    gateway_lat, gateway_lon = load_starlink_gateways(csv_path=args.gateways_csv)
+    print(f"  Loaded {len(gateway_lat):,} Starlink gateways")
 
     data_dir = os.path.join(_script_dir, "data")
     v_band_csv = os.path.join(data_dir, "AMSU-A V-Band 50.3 GHz absolute antenna pattern.csv")
@@ -330,25 +533,73 @@ def main():
         eta_rad=GROUND_EMITTER_ETA_RAD,
         valid_freqs=(1e9, 100e9),
     )
+    gateway_pattern_csv = os.path.join(data_dir, "starlink_gateway_antenna_pattern.csv")
+    if not os.path.exists(gateway_pattern_csv):
+        print(
+            f"WARNING: Starlink gateway antenna CSV not found: {gateway_pattern_csv}\n"
+            "  Using legacy 5G sector pattern (see create_5g_sector_antenna_pattern)."
+        )
+        gateway_antenna = create_5g_sector_antenna_pattern(
+            gain_max=GATEWAY_GAIN_MAX,
+            horiz_beamwidth=GATEWAY_HORIZ_BW,
+            vert_beamwidth=GATEWAY_VERT_BW,
+            eta_rad=GATEWAY_ETA_RAD,
+            valid_freqs=(1e9, 100e9),
+        )
+    else:
+        gateway_antenna = load_starlink_gateway_antenna_from_csv(
+            gateway_pattern_csv,
+            eta_rad=1.0,
+            valid_freqs=(1e9, 100e9),
+        )
+        print(f"  Starlink gateway antenna: {gateway_pattern_csv}")
 
-    # Load nc4 and compute emitter density once (shared across all channels)
     print(f"Loading {args.nc4}...")
     data = load_amsua_nc4_and_build_arrays(args.nc4)
     n_obs = data["n_obs"]
     unique_ts = np.unique(data["timestamps"])
     print(f"  Observations: {n_obs:,}; unique timestamps: {len(unique_ts):,}")
+
     print("Computing emitter density (vectorized)...")
-    t0 = time_module.perf_counter()
+    t0_dens = time_module.perf_counter()
     density = get_emitter_density_vectorized(data["lat"], data["lon"])
-    print(f"  Done in {time_module.perf_counter() - t0:.1f} s")
+    print(f"  Done in {time_module.perf_counter() - t0_dens:.1f} s")
 
     out_base_nc4 = os.path.splitext(os.path.basename(args.nc4))[0]
     out_dir = args.out_dir or os.path.dirname(os.path.abspath(args.nc4))
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
-    top5_path = os.path.join(out_dir, f"{out_base_nc4}_top5.txt")
-    import pandas as pd
+
+    top5_path = os.path.join(out_dir, f"{out_base_nc4}_{TOP5_STEM}_top5.txt")
+    gateway_bbox_margin_deg = 0.0 if args.no_gateway_bbox else 1.0
+    in_fov_first = not args.attenuation_first
+    gw_random = not args.legacy_gateway_boresight_at_satellite
+    gw_bore_pt = True
+    print(
+        "  Starlink gateway link order: "
+        + (
+            "in-FOV first (then ITU-R for gateways in a footprint)"
+            if in_fov_first
+            else "attenuation first (original)"
+        )
+    )
+    print(
+        "  Starlink gateway antenna: "
+        + (
+            "uniform random boresight (az [0,360) deg, el [25,90] deg) + off-boresight gain"
+            if gw_random
+            else "legacy bore sight toward satellite (relative gain 1)"
+        )
+    )
+
     with open(top5_path, "w") as top5_file:
+        top5_file.write("=" * 72 + "\n")
+        top5_file.write("5G ground emitters (second harmonic in channel band)\n")
+        top5_file.write("=" * 72 + "\n")
+        print("\n" + "=" * 72)
+        print("5G ground emitters (second harmonic in channel band)")
+        print("=" * 72)
+
         for idx, (ch_num, center_freq_hz, bandwidth_hz) in enumerate(AMSUA_CHANNEL_CONFIGS):
             emitter_fundamental_hz = emitter_fundamental_hz_list[idx]
             harmonic_freq_hz = 2.0 * emitter_fundamental_hz
@@ -356,12 +607,21 @@ def main():
             freq_max = center_freq_hz + bandwidth_hz / 2.0
             harmonic_in_band = freq_min <= harmonic_freq_hz <= freq_max
 
-            out_csv = os.path.join(out_dir, f"{out_base_nc4}_5G_RFI_ch{ch_num}.csv")
-            print(f"\nChannel {ch_num}: {center_freq_hz/1e9:.2f} GHz, BW={bandwidth_hz/1e6:.0f} MHz, "
-                  f"emitter fundamental={emitter_fundamental_hz/1e9:.2f} GHz (2nd harmonic={harmonic_freq_hz/1e9:.2f} GHz)")  # noqa: E501
+            out_csv = os.path.join(
+                out_dir, f"{out_base_nc4}_{RFI_PREFIX_5G}_RFI_ch{ch_num}.csv"
+            )
+            print(
+                f"\n[5G] Channel {ch_num}: {center_freq_hz/1e9:.2f} GHz, BW={bandwidth_hz/1e6:.0f} MHz, "
+                f"emitter fundamental={emitter_fundamental_hz/1e9:.2f} GHz "
+                f"(2nd harmonic={harmonic_freq_hz/1e9:.2f} GHz)"
+            )
 
+            t0_ch = time_module.perf_counter()
             if not harmonic_in_band:
-                print(f"  2nd harmonic out of channel band [{freq_min/1e9:.3f}, {freq_max/1e9:.3f}] GHz → zero RFI for all observations")  # noqa: E501
+                print(
+                    f"  2nd harmonic out of channel band [{freq_min/1e9:.3f}, {freq_max/1e9:.3f}] GHz "
+                    "→ zero RFI for all observations"
+                )
                 df = pd.DataFrame({
                     "timestamp": data["timestamps"],
                     "satellite": data["satellite"],
@@ -374,7 +634,7 @@ def main():
                 df.to_csv(out_csv, index=False)
                 print(f"  Wrote {out_csv} ({len(df):,} rows)")
             else:
-                df = run_rfi_for_channel(
+                df = run_rfi_for_channel_5g(
                     data,
                     density,
                     ecef_by_satellite,
@@ -387,28 +647,176 @@ def main():
                     out_csv,
                     sensor_name="AMSU-A",
                 )
+            print(f"  [5G] Channel {ch_num} done in {time_module.perf_counter() - t0_ch:.1f} s")
 
-            rfi_K_float = df["rfi_brightness_temperature_K"].astype(float)
-            idx_top5 = rfi_K_float.abs().nlargest(5).index
-            ch_header = (f"Channel {ch_num}: {center_freq_hz/1e9:.2f} GHz, BW={bandwidth_hz/1e6:.0f} MHz, "
-                         f"emitter fundamental={emitter_fundamental_hz/1e9:.2f} GHz (2nd harmonic={harmonic_freq_hz/1e9:.2f} GHz)")  # noqa: E501
-            top5_file.write(f"\n{ch_header}\n")
-            print("  Top 5 by |rfi_brightness_temperature_K|:")
-            top5_file.write("  Top 5 by |rfi_brightness_temperature_K|:\n")
-            for rank, idx in enumerate(idx_top5, start=1):
-                row = df.loc[idx]
-                line = (f"    [{rank}] satellite: {row['satellite']}, lat: {row['lat']}, lon: {row['lon']}, "
-                        f"saza: {row['saza']}, rfi_power_dBW: {row['rfi_power_dBW']}, "
-                        f"rfi_Tb_K: {row['rfi_brightness_temperature_K']}")
-                print(line)
-                top5_file.write(line + "\n")
+            ch_header = (
+                f"[5G] Channel {ch_num}: {center_freq_hz/1e9:.2f} GHz, BW={bandwidth_hz/1e6:.0f} MHz, "
+                f"emitter fundamental={emitter_fundamental_hz/1e9:.2f} GHz "
+                f"(2nd harmonic={harmonic_freq_hz/1e9:.2f} GHz)"
+            )
+            _append_top5_block(top5_file, ch_header, df)
+
+        top5_file.write("\n" + "=" * 72 + "\n")
+        top5_file.write("Starlink ground gateways (direct RFI at channel center)\n")
+        top5_file.write("=" * 72 + "\n")
+        print("\n" + "=" * 72)
+        print("Starlink ground gateways (direct RFI at channel center)")
+        print("=" * 72)
+
+        for idx, (ch_num, amsua_center_freq_hz, bandwidth_hz) in enumerate(AMSUA_CHANNEL_CONFIGS):
+            gateway_center_freq_hz = gateway_center_freq_hz_list[idx]
+            freq_min = amsua_center_freq_hz - bandwidth_hz / 2.0
+            freq_max = amsua_center_freq_hz + bandwidth_hz / 2.0
+            gateway_in_band = freq_min <= gateway_center_freq_hz <= freq_max
+
+            out_csv = os.path.join(
+                out_dir, f"{out_base_nc4}_{RFI_PREFIX_STARLINK}_RFI_ch{ch_num}.csv"
+            )
+            print(
+                f"\n[Starlink] Channel {ch_num}: {gateway_center_freq_hz/1e9:.2f} GHz, "
+                f"BW={bandwidth_hz/1e6:.0f} MHz (direct RFI at gateway center freq)"
+            )
+
+            t0_ch = time_module.perf_counter()
+            if not gateway_in_band:
+                print(
+                    f"  Gateway center freq out of channel band [{freq_min/1e9:.3f}, {freq_max/1e9:.3f}] GHz "
+                    "→ zero RFI for all observations"
+                )
+                df = pd.DataFrame({
+                    "timestamp": data["timestamps"],
+                    "satellite": data["satellite"],
+                    "lat": np.round(data["lat"], 6),
+                    "lon": np.round(data["lon"], 6),
+                    "saza": np.round(data["saza"], 6),
+                    "rfi_power_dBW": np.round(np.full(n_obs, -300.0), 3),
+                    "rfi_brightness_temperature_K": ["0.000e+00"] * n_obs,
+                })
+                df.to_csv(out_csv, index=False)
+                print(f"  Wrote {out_csv} ({len(df):,} rows)")
+            else:
+                df = run_rfi_for_channel_starlink_gateway(
+                    data,
+                    gateway_lat,
+                    gateway_lon,
+                    ecef_by_satellite,
+                    v_band_antenna,
+                    gateway_antenna,
+                    ch_num,
+                    gateway_center_freq_hz,
+                    bandwidth_hz,
+                    out_csv,
+                    sensor_name="AMSU-A",
+                    chunk_size=args.chunk_size,
+                    gateway_bbox_margin_deg=gateway_bbox_margin_deg,
+                    in_fov_first=in_fov_first,
+                    gateway_random_boresight=gw_random,
+                    gateway_boresight_pointing=gw_bore_pt,
+                    gateway_boresight_random_seed=args.gateway_boresight_random_seed,
+                )
+            print(
+                f"  [Starlink] Channel {ch_num} done in "
+                f"{time_module.perf_counter() - t0_ch:.1f} s"
+            )
+
+            ch_header = (
+                f"[Starlink] Channel {ch_num}: {gateway_center_freq_hz/1e9:.2f} GHz, "
+                f"BW={bandwidth_hz/1e6:.0f} MHz (direct RFI)"
+            )
+            _append_top5_block(top5_file, ch_header, df)
 
     print(f"\nTop 5 summary written to {top5_path}")
 
-    # combine channel CSVs: set remove_channel_files=False to keep the channel CSVs
-    combined_path = combine_channel_csvs(out_dir, out_base_nc4, remove_channel_files=True)
-    if combined_path is not None:
-        print(f"Combined channel CSVs to {combined_path}.")
+    combined_5g = combine_channel_csvs(
+        out_dir, out_base_nc4, remove_channel_files=True, rfi_prefix=RFI_PREFIX_5G
+    )
+    if combined_5g is not None:
+        print(f"Combined 5G channel CSVs to {combined_5g}.")
+
+    combined_sl = combine_channel_csvs(
+        out_dir, out_base_nc4, remove_channel_files=True, rfi_prefix=RFI_PREFIX_STARLINK
+    )
+    if combined_sl is not None:
+        print(f"Combined Starlink Gateway channel CSVs to {combined_sl}.")
+
+    sum_path = sum_two_rfi_combined_csvs_by_channel(
+        out_dir,
+        out_base_nc4,
+        rfi_prefix_a=RFI_PREFIX_5G,
+        rfi_prefix_b=RFI_PREFIX_STARLINK,
+        output_rfi_prefix=COMBINED_SUM_PREFIX,
+    )
+    if sum_path is not None:
+        print(f"Wrote summed Tb combined CSV to {sum_path}.")
+        rfi_nc4 = Path(out_dir) / f"{out_base_nc4}_RFI.nc4"
+        ch_nums = [cfg[0] for cfg in AMSUA_CHANNEL_CONFIGS]
+        try:
+            csv_5g = Path(out_dir) / f"{out_base_nc4}_{RFI_PREFIX_5G}_RFI_combined.csv"
+            csv_sl = Path(out_dir) / f"{out_base_nc4}_{RFI_PREFIX_STARLINK}_RFI_combined.csv"
+
+            df_sum_cr = pd.read_csv(sum_path)
+            lat_cr = pd.to_numeric(df_sum_cr["lat"], errors="coerce").to_numpy(
+                dtype=np.float64
+            )
+            lon_cr = pd.to_numeric(df_sum_cr["lon"], errors="coerce").to_numpy(
+                dtype=np.float64
+            )
+            saza_cr = pd.to_numeric(df_sum_cr["saza"], errors="coerce").to_numpy(
+                dtype=np.float64
+            )
+            elevation_deg_cr = 90.0 - np.abs(saza_cr)
+            data_dir_cr = os.path.join(_script_dir, "data")
+            itu_nc_cr = itu_iclw_rain_info_nc_path(
+                os.path.basename(sum_path), data_dir_cr
+            )
+            center_freqs_ghz_cr = (
+                np.array([cfg[1] for cfg in AMSUA_CHANNEL_CONFIGS], dtype=np.float64)
+                / 1e9
+            )
+            rng_cr = np.random.default_rng(None)
+            atten_db_cr = compute_cloud_rain_atten_db_for_fovs(
+                lat_cr,
+                lon_cr,
+                elevation_deg_cr,
+                itu_nc_cr,
+                center_freqs_ghz_cr,
+                rng_cr,
+                iclw_abs_threshold=CLOUD_RAIN_ICLW_ABS_THRESHOLD,
+            )
+            atten_by_ch = atten_db_to_by_channel_dict(ch_nums, atten_db_cr)
+
+            top5_att_path = (
+                Path(out_dir) / f"{out_base_nc4}_5G_Starlink_Gateway_Attenuation_top5.txt"
+            )
+            df_5g_cr = pd.read_csv(csv_5g)
+            df_sl_cr = pd.read_csv(csv_sl)
+            write_attenuated_combined_rfi_top5_file(
+                top5_att_path,
+                df_sum_cr,
+                df_5g_cr,
+                df_sl_cr,
+                ch_nums,
+                atten_by_ch,
+            )
+
+            copy_nc4_with_tmbr_plus_rfi(
+                args.nc4,
+                rfi_nc4,
+                sum_path,
+                tmbr_channel_numbers_with_rfi=ch_nums,
+                n_tmbr_channels=TMBR_N_CHANNELS,
+                combined_rfi_csv_5g=csv_5g,
+                combined_rfi_csv_starlink=csv_sl,
+                cloud_rain_atten_db_by_channel=atten_by_ch,
+            )
+            print(
+                f"Wrote RFI-augmented netCDF (TMBR with cloud/rain-scaled summed RFI, CELL_RFI, GATE_RFI, "
+                f"CLOUD_RAIN_ATT on ch 3–8) to {rfi_nc4}."
+            )
+        except Exception as e:
+            print(f"WARNING: Could not write {rfi_nc4.name}: {e}, likely lack of system memory in the machine")
+    else:
+        print("WARNING: Could not build 5G+Starlink summed combined CSV (missing or mismatched inputs).")
 
     elapsed = time_module.perf_counter() - t_start
     print(f"\nOverall execution time: {elapsed:.1f} s")
