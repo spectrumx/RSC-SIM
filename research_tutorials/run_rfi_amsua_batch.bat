@@ -7,7 +7,7 @@ if "%~1"=="" (
 )
 set "SENSOR_DIR=%~1"
 set "SCRIPT=AMSU-A_RFI_modeling.py"
-echo Running AMSU-A RFI for all .nc4 in %SENSOR_DIR%
+echo Running AMSU-A RFI (5G + Starlink gateway) for all .nc4 in %SENSOR_DIR%
 for %%F in ("%SENSOR_DIR%\*.nc4") do (
   set "nc4=%%F"
   echo --- %%~nxF

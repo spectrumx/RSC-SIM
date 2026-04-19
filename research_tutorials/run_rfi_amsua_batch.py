@@ -9,7 +9,8 @@ from pathlib import Path
 
 def run_rfi_script(nc4_path, sensor_name, script_path, out_dir, max_retries=2):
     """
-    Worker: run RFI modeling script for one nc4. ECEF lookups are loaded by the script from out_dir.
+    Worker: run AMSU-A_RFI_modeling.py for one nc4 (5G harmonic + Starlink gateway; default gateways CSV).
+    ECEF lookups are loaded from the same directory as the nc4/out_dir.
     """
     cmd = [
         sys.executable, str(script_path),
@@ -33,7 +34,10 @@ def run_rfi_script(nc4_path, sensor_name, script_path, out_dir, max_retries=2):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Parallel AMSU-A RFI batch run over all .nc4 in a sensor directory (e.g. util/AMSU-A)."
+        description=(
+            "Parallel batch: run AMSU-A_RFI_modeling.py on every .nc4 in a sensor directory "
+            "(5G + Starlink gateway RFI; e.g. util/AMSU-A). Optional script flags are not passed."
+        )
     )
     parser.add_argument("sensor_dir", help="Sensor directory containing .nc4 and ECEF lookups (e.g. util/AMSU-A)")
     parser.add_argument(
@@ -67,10 +71,10 @@ def main():
 
     log_file = script_dir / f"AMSU-A_{sensor_dir.name}_error_log.txt"
     with open(log_file, "w") as f:
-        f.write(f"--- AMSU-A RFI Processing Exceptions for {sensor_dir} ---\n")
+        f.write(f"--- AMSU-A RFI (5G + Starlink gateway) processing exceptions for {sensor_dir} ---\n")
         f.write(f"Started at: {time.ctime()}\n\n")
 
-    print(f"--- Starting Parallel AMSU-A RFI Run (Core usage: {use_cores}) ---")
+    print(f"--- Starting parallel AMSU-A RFI run (5G + Starlink gateway; cores: {use_cores}) ---")
     print(f"Sensor directory: {sensor_dir}")
     print(f"Processing {total_files} nc4 file(s).")
     print(f"Logging errors/skips to: {log_file}")

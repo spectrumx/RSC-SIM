@@ -72,7 +72,7 @@ The Python implementation is organized as follows:
     - Cached atmospheric calculator for improved computational performance
     - See `tuto_radiomdl_weather_phase3_input_parameters.md` for detailed parameter documentation
 
-- **RFI modeling for NWP simulation** (`ATMS_RFI_modeling.py`, `AMSU-A_RFI_modeling.py`, `SSMI-S_RFI_modeling.py`): Designed for **numerical weather prediction (NWP) simulation** over full sensor scans. They read netCDF-4 observation files (many FOVs per file), use ECEF lookups and `src/weather_sat_nwp.py` to compute 5G ground-emitter RFI (dBW and brightness temperature) for every FOV, then combine per-channel CSVs. Batch scripts run all nc4 files in a satellite directory. See `README_RFI_modeling_for_NWP_simulation.md` for the procedure; TLE utilities in `util/` are documented in `util/README_TLE01_TLE02_TLE03.md`.
+- **RFI modeling for NWP simulation** (`ATMS_RFI_modeling.py`, `AMSU-A_RFI_modeling.py`, `SSMI-S_RFI_modeling.py`): Designed for **numerical weather prediction (NWP) simulation** over full sensor scans. They read netCDF-4 observation files (many FOVs per file), use ECEF lookups, `src/weather_sat_nwp.py`, and `src/starlink_gateway_mdl.py` to compute **5G** (second harmonic in band) and **Starlink ground gateway** RFI (dBW and brightness temperature) per FOV, sum sources per channel, then apply **cloud/rain slant attenuation** (ITU-R P.840 / P.838 via `src/attenuation_mdl.py`) as a linear factor on the summed brightness temperature in Kelvin before updating `TMBR` in `{stem}_RFI.nc4`. Monthly ITU grids containing ICLW mean/std and rain fields, `data/itu_iclw_rain_info_MM.nc` at `research_tutorials/data`, are used for the calculation of cloud/rain attenuations. Batch scripts run all nc4 files in a satellite directory. See `README_RFI_modeling_for_NWP_simulation.md` for the procedure; TLE utilities in `util/` are documented in `util/README_TLE01_TLE02_TLE03.md`.
 
   - **`ATMS_RFI_modeling.py`**: RFI modeling for ATMS sensor on the SUOMI-NPP and JPSS-1 (NOAA-20) weather satellites
 
@@ -89,10 +89,14 @@ The `research_tutorials/data/` directory contains input data files of simulation
   - **Phase 1 Weather Satellite RFI Modeling**:
     - `Starlink_trajectory_Westford_2025-11-01T07_45_00.000_2025-11-01T08_45_00.000.arrow`: Starlink constellation trajectory for weather satellite RFI analysis
     - `jpss_trajectory_Westford_2025-11-01T07_45_00.000_2025-11-01T08_45_00.000.arrow`: JPSS (Suomi-NPP) weather satellite trajectory
-- **CSV files** (Phase 1 Weather Satellite RFI Modeling):
-  - `K-Band 23.8 GHz absolute antenna pattern.csv`: ATMS sensor's K-Band antenna gain pattern (elevation angle vs. absolute power in dB)
-  - `V-Band 50.3 GHz absolute antenna pattern.csv`: ATMS sensor's V-Band antenna gain pattern (elevation angle vs. absolute power in dB)
-  - `AMSU-A V-Band 50.3 GHz absolute antenna pattern.csv`: AMSU-A sensor's V-Band antenna gain pattern (elevation angle vs. absolute power in dB)
+- **CSV files** (antenna patterns of weather sensors and Starlink gateway, and gateway geolocation data):
+  - `K-Band 23.8 GHz absolute antenna pattern.csv`: ATMS K-band gain vs. elevation (dB).
+  - `V-Band 50.3 GHz absolute antenna pattern.csv`: ATMS V-band gain vs. elevation (dB).
+  - `AMSU-A V-Band 50.3 GHz absolute antenna pattern.csv`: AMSU-A V-band gain vs. elevation (dB).
+  - `SSMI-S V-Band absolute antenna pattern.csv`: SSMI-S V-band receiver pattern for RFI scripts.
+  - `starlink_gateway_antenna_pattern.csv`: Tabulated Starlilnk gateway antenna pattern used with gateway RFI modeling.
+  - `starlink_gateways_geolocations.csv`: Geolocations (lat/lon) of Starlink ground gateway site for ATMS / AMSU-A / SSMI-S NWP RFI.
+- **NetCDF (ITU cloud/rain for NWP RFI):** `itu_iclw_rain_info_MM.nc` (e.g. `…_08.nc` for August) — monthly integrated cloud liquid water content (ICLW) mean/std and rain fields for P.840/P.838 slant attenuation; month **MM** must match your observation stem. If absent, scripts warn and use 0 dB attenuation. Note that since the file size is large, they are stored in a cloud storage.
 - **GeoTIFF files**:
   - **DEM**: `USGS_OPR_MA_CentralEastern_2021_B21_be_19TBH294720.tif` — Digital Elevation Model for terrain analysis and environmental effects (area around MIT Westford antenna; see [USGS 1 meter DEMs](https://data.usgs.gov/datacatalog/data/USGS:77ae0551-c61e-4979-aedd-d797abdcde0e)).
   - **GHSL population data (GHS-POP)** for RFI modeling for NWP simulations: Please download `GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif` from EU [Global Human Settlement Layer (GHSL)](https://human-settlement.emergency.copernicus.eu/download.php?ds=pop) for Epoch: 2025, Resolution: 30 arcsec (~1 km²), and Coordinate system: WGS84. Used for 5G ground emitter density in ATMS/AMSU-A/SSMI-S RFI scripts.
@@ -100,8 +104,8 @@ The `research_tutorials/data/` directory contains input data files of simulation
   - `tuto_radiomdl_weather_phase1_input_parameters.md`: Comprehensive documentation of input parameters for Phase 1 weather satellite RFI modeling, including trajectory file generation instructions
   - `tuto_radiomdl_weather_phase2_input_parameters.md`: Comprehensive documentation of input parameters for Phase 2 weather satellite RFI modeling, including ground emitter configuration
   - `tuto_radiomdl_weather_phase3_input_parameters.md`: Comprehensive documentation of input parameters for Phase 3 weather satellite RFI modeling, including enhanced atmospheric modeling (ITU-R P.676) and ground reflection effects
-  - `README_RFI_modeling_for_NWP_simulation.md`: Procedure to run 5G ground-emitter RFI estimation for ATMS, AMSU-A, and SSMI-S sensors: data preparation (ECEF lookups via TLE01–TLE03 in `util/`), running single-nc4 or batch processing including parallel processing, and combining per-channel CSVs
-  - `Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md`: Reference for expert tuning of input parameters (EIRP, antenna pattern, channel frequency/bandwidth, emitter density, etc.) used by the three RFI modeling scripts for NWP simulations
+  - `README_RFI_modeling_for_NWP_simulation.md`: Procedure for ATMS / AMSU-A / SSMI-S RFI for NWP: GHSL + ITU cloud/rain grids, ECEF lookups (TLE01–TLE03), 5G + Starlink gateway runs, combined outputs and `{stem}_RFI.nc4`.
+  - `Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md`: Expert tuning reference: 5G emitters, Starlink gateways, channel geometry, atmosphere (P.676), and cloud/rain path attenuation (ICLW threshold, gateway EIRP/antenna).
 
 The `research_tutorials/util/data/` directory contains TLE data of weather satellites such as SUOMI-NPP, JPSS-1, NOAA-15, NOAA-18, NOAA-19, METOP-B, METOP-C, and DMSP-F17, which were obtained through [Space-Track](https://www.space-track.org/) for a date range from 2023-08-01 to 2023-11-01 for RFI modeling for NWP simulations. These TLE data are used to identify weather satellite's ECEF coordinate at each timestamp in the sensor observation data files (.nc4).
 
@@ -144,10 +148,10 @@ The Python implementation can be used through:
 - Refer to `tuto_radiomdl_weather_phase3_input_parameters.md` for detailed parameter descriptions
 
 **RFI modeling for NWP simulations (ATMS, AMSU-A, and SSMI-S sensors):**
-- **Scripts** (process one nc4 file per run; require ECEF lookup CSVs from `util/` TLE01–TLE03 pipeline):
-  - `ATMS_RFI_modeling.py`: 5G RFI (dBW and brightness temperature) for ATMS sensor on SUOMI-NPP and JPSS-1. Run from `research_tutorials/`; nc4 and lookups live under `util/JPSS-1/`, `util/SUOMI-NPP/`.
-  - `AMSU-A_RFI_modeling.py`: Same for AMSU-A on NOAA-15, NOAA-18, NOAA-19, METOP-B, METOP-C. nc4 and lookups under `util/NOAA-15/`, etc.
-  - `SSMI-S_RFI_modeling.py`: Same for SSMI-S on DMSP-F17. nc4 and lookups under `util/DMSP-F17/`.
+- **Scripts** (process one nc4 per run; ECEF lookups from `util/` TLE02–TLE03; optional `--gateways_csv` for Starlink gateway lat/lon list):
+  - `ATMS_RFI_modeling.py`: 5G + Starlink gateway RFI for ATMS (SUOMI-NPP, JPSS-1). Outputs include per-source and summed combined CSVs, top-5 summaries, `{stem}_RFI.nc4` with updated `TMBR`, `CELL_RFI`, `GATE_RFI`, and `CLOUD_RAIN_ATT` (dB). Run from `research_tutorials/`; example nc4 under `util/ATMS/`.
+  - `AMSU-A_RFI_modeling.py`: Same pattern for AMSU-A (NOAA/METOP). Example under `util/AMSU-A/`.
+  - `SSMI-S_RFI_modeling.py`: Same pattern for SSMI-S (DMSP-F17 when SAID supported). Example under `util/SSMI-S/`.
 - **Batch runs** (run all nc4 files in the corresponding satellite directory):
   - **Windows:** `run_rfi_atms_batch.bat`, `run_rfi_amsua_batch.bat`, `run_rfi_ssmis_batch.bat` for ATMS, AMSU-A, and SSMI-S sensors, respectively.
   - **macOS/Linux:** `run_rfi_atms_batch.sh`, `run_rfi_amsua_batch.sh`, `run_rfi_ssmis_batch.sh` for ATMS, AMSU-A, and SSMI-S sensors, respectively.

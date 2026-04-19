@@ -1,6 +1,6 @@
 # RFI estimation: ATMS, AMSU-A, and SSMI-S
 
-Brief procedure to run 5G ground-emitter RFI estimation for weather satellite sensors. Each nc4 file can contain data from **multiple satellites** (identified by SAID); each script processes one nc4 and uses ECEF lookups from the same sensor directory. Run one nc4 at a time, or use the batch scripts to process all nc4 files in a sensor directory.
+Procedure to run **5G ground-emitter** and **Starlink ground gateway** RFI for weather satellite sensors, then write **`{stem}_RFI.nc4`** with summed brightness temperature adjusted by **cloud/rain slant attenuation** (ITU P.840 / P.838). Each nc4 can hold **multiple satellites** (SAID); each script processes one nc4 and loads ECEF lookups from the same sensor directory. Run one nc4 at a time, or use batch / parallel batch drivers.
 
 - Note that this will require large disk space due to the file sizes of .nc4 files and generated output CSVs.
 
@@ -8,7 +8,10 @@ Brief procedure to run 5G ground-emitter RFI estimation for weather satellite se
 
 ## 1. Download GHS-POP data (`GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif`)
 
-European Union's Global Human Settlement Layer (GHSL) Population data (GHG-POP) needs to be downloaded from EU [Global Human Settlement Layer (GHSL)](https://human-settlement.emergency.copernicus.eu/download.php?ds=pop) for Epoch: 2025, Resolution: 30 arcsec (~1 km²), and Coordinate system: WGS84. It is zip compressed but only `GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif` file is required. Please place it at `research_tutorial/data/` directory. It is used for 5G ground emitter density in ATMS/AMSU-A/SSMI-S RFI scripts.
+European Union's Global Human Settlement Layer (GHSL) Population data (GHG-POP) needs to be downloaded from EU [Global Human Settlement Layer (GHSL)](https://human-settlement.emergency.copernicus.eu/download.php?ds=pop) for Epoch: 2025, Resolution: 30 arcsec (~1 km²), and Coordinate system: WGS84. It is zip compressed but only `GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif` file is required. Please place it at `research_tutorials/data/`. It is used for 5G ground emitter density in ATMS/AMSU-A/SSMI-S RFI scripts.
+
+## 1-1. Download monthly ITU grids (`itu_iclw_rain_info_MM.nc`)
+ITU cloud/rain grid file contains monthly mean/std of the integrated cloud liquid water content and rain fields for the consideration of cloud/rain attenuation. Place `itu_iclw_rain_info_MM.nc` (e.g. `…_08.nc` for August) in `research_tutorials/data/`. Month **MM** is inferred from the date token in the nc4/CSV stem (same rule as the scripts). If the file is missing, attenuation defaults to **0 dB** (warning only). Note that since the file size is large, they are stored in a cloud storage.
 
 ---
 
@@ -66,13 +69,14 @@ research_tutorials/
   Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md
 ```
 
-After running the RFI batch scripts (section 3), each sensor directory will also contain `{nc4_stem}_5G_RFI_chN.csv` (per channel, with columns timestamp, satellite, lat, lon, ...) and `{nc4_stem}_5G_RFI_combined.csv` (timestamp + channel Tb columns only).
+After a successful run, the sensor directory typically gains (names depend on channel set): `{stem}_5G_RFI_ch*.csv`, `{stem}_Starlink_Gateway_RFI_ch*.csv`, combined `*_5G_RFI_combined.csv` and `*_Starlink_Gateway_RFI_combined.csv`, summed `*_5G_Starlink_Gateway_RFI_combined.csv`, `*_5G_Starlink_Gateway_top5.txt`, `*_5G_Starlink_Gateway_Attenuation_top5.txt` (effective Tb after path loss), and **`{stem}_RFI.nc4`** (copy of input nc4 with `TMBR` updated, plus `CELL_RFI`, `GATE_RFI`, `CLOUD_RAIN_ATT` on the compact channel axis).
 
 ---
 
 ## 3. Running RFI scripts (single nc4)
 
-Run from **`research_tutorials/`**. Arguments: `--sensor` (required), `--nc4` (required), `--out_dir` (optional; default is the directory of the nc4 file). ECEF lookups are loaded automatically from the same directory as the nc4 (`*_ECEF_lookup_{stem}.csv`).
+Run from **`research_tutorials/`**. Arguments: `--sensor` (required), `--nc4` (required), `--out_dir` (optional; default is the nc4 directory), **`--gateways_csv`** (optional; default `data/starlink_gateways_geolocations.csv`). ECEF lookups load from the same folder as the nc4 (`*_ECEF_lookup_{stem}.csv`).
+An example command is provided at each RFI modeling script (e.g., `ATMS_RFI_modeling.py` etc.)
 
 ### ATMS (SUOMI-NPP, JPSS-1; SAID 224, 225)
 
@@ -80,7 +84,7 @@ Run from **`research_tutorials/`**. Arguments: `--sensor` (required), `--nc4` (r
 python ATMS_RFI_modeling.py --sensor ATMS --nc4 util/ATMS/atms_2023080112.nc4 --out_dir util/ATMS
 ```
 
-Output: `--out_dir`/`{nc4_stem}_5G_RFI_chN.csv` (channels 3–9), each with columns timestamp, satellite, lat, lon, saza, rfi_power_dBW, rfi_brightness_temperature_K.
+Outputs: per-channel **5G** and **Starlink_Gateway** CSVs; combined and **summed** CSVs; top-5 text files; **`{stem}_RFI.nc4`**. Per-channel CSVs (ch 3–9) include timestamp, satellite, lat, lon, saza, `rfi_power_dBW`, `rfi_brightness_temperature_K`.
 
 ### AMSU-A (NOAA-15/18/19, METOP-B/C)
 
@@ -88,7 +92,7 @@ Output: `--out_dir`/`{nc4_stem}_5G_RFI_chN.csv` (channels 3–9), each with colu
 python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 util/AMSU-A/amsua_2023080112.nc4 --out_dir util/AMSU-A
 ```
 
-Output: `--out_dir`/`{nc4_stem}_5G_RFI_chN.csv` (channels 3–8), same column layout.
+Outputs: same pattern as ATMS for channels **3–8**.
 
 ### SSMI-S (only SAID 285 = DMSP-F17; SAID 286 and others get RFI = 0)
 
@@ -96,7 +100,7 @@ Output: `--out_dir`/`{nc4_stem}_5G_RFI_chN.csv` (channels 3–8), same column la
 python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 util/SSMI-S/ssmis_2023080112.nc4 --out_dir util/SSMI-S
 ```
 
-Output: `--out_dir`/`{nc4_stem}_5G_RFI_chN.csv` (channels 1–5; no SAZA column). Combined CSV has timestamp and channel Tb columns only (no satellite column).
+Outputs: same dual-source pattern for channels **1–5**. Per-channel CSVs omit **SAZA**; combined Tb CSVs are timestamp + channel columns only (no satellite column).
 
 ---
 
@@ -145,7 +149,7 @@ For faster batch runs on multi-core computers, use the Python batch drivers (if 
 
 Progress is printed as each nc4 file completes, e.g. `[2/5] atms_2023080113.nc4 ... SUCCESS`.
 
-Outputs are the same as in section 3: `{nc4_stem}_5G_RFI_chN.csv` and `{nc4_stem}_5G_RFI_combined.csv` in the given sensor directory.
+Outputs match section 3 (5G + gateway CSVs, combined/summed files, top-5 files, `{stem}_RFI.nc4`).
 
 ---
 

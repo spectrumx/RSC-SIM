@@ -1,33 +1,47 @@
 """
-ITU-R P.676 Atmospheric Gaseous Attenuation Model
+ITU-R atmospheric attenuation utilities for weather satellite RFI modeling.
 
-Optimized implementation for weather satellite RFI modeling (Phase 3).
+- **P.676** — Gaseous absorption: ``ITUP676Calculator``, ``get_cached_calculator``.
+- **P.840-9 / P.838-3** — Cloud and rain slant attenuation (vectorized NumPy):
+  ``cloud_attenuation_db``, ``rain_attenuation_db``, ``compute_cloud_rain_attenuation_db``,
+  plus defaults (path-length range, P.838 coefficient tables). Gating threshold
+  ``iclw_abs_threshold`` is supplied by the caller.
 
-This module provides the ITUP676Calculator class for efficient calculation
-of atmospheric gaseous attenuation due to oxygen and water vapor following
-ITU-R P.676-13 recommendation.
-
-Usage:
+Usage (P.676):
     from attenuation_mdl import ITUP676Calculator, get_cached_calculator
-
-    # Option 1: Create calculator instance
     calc = ITUP676Calculator()
     attenuation_db = calc.total_slant_attenuation(freq_ghz=50.3, elevation_deg=30.0)
 
-    # Option 2: Use cached global instance
-    calc = get_cached_calculator()
-    attenuation_db = calc.total_slant_attenuation(freq_ghz=50.3, elevation_deg=30.0)
+Usage (cloud / rain):
+    from attenuation_mdl import compute_cloud_rain_attenuation_db
+    # iclw_abs_threshold is required (set in your application / sensor script).
 
-Reference:
-    ITU-R P.676-13 (08/2022): Attenuation by atmospheric gases and related effects
+ITU ICLW / rain NetCDF grids and per-FOV slant attenuation for RFI pipelines:
+``load_iclw_grid``, ``load_itu_rain_grid``, ``itu_iclw_rain_info_nc_path``,
+``compute_cloud_rain_atten_db_for_fovs``, ``atten_db_to_by_channel_dict``.
+
+References:
+    ITU-R P.676-13 (08/2022); P.840-9 (cloud); P.838-3 (rain coefficients).
 
 Author: Weather Satellite RFI Modeling Team
 """
 
+import os
+import re
+
 import numpy as np
 import pandas as pd
-import os
-from typing import Dict
+from typing import Dict, Sequence
+
+try:
+    from scipy.spatial import cKDTree
+except ImportError:
+    cKDTree = None  # type: ignore[assignment, misc]
+
+try:
+    from netCDF4 import Dataset
+except ImportError:
+    Dataset = None  # type: ignore[assignment, misc]
 
 
 # =============================================================================
@@ -594,6 +608,578 @@ def reset_cached_calculator():
 
 
 # =============================================================================
+# ITU-R P.840-9 (cloud) and P.838-3 (rain) slant attenuation
+# =============================================================================
+
+# Rain path length Uniform[low, high) km — typical draw per rainy FOV.
+RAIN_PATH_LENGTH_UNIFORM_LOW_KM = 2.0
+RAIN_PATH_LENGTH_UNIFORM_HIGH_KM = 8.0
+
+# Cloud liquid water temperature (K), P.840-9 default.
+DEFAULT_CLOUD_WATER_TEMP_K = 273.75
+# Circular polarization tilt for P.838-3 (degrees).
+DEFAULT_RAIN_TAU_DEG = 45.0
+
+# ITU-R P.838-3 frequency table (GHz) and coefficients
+P838_FREQ_TABLE_GHZ = np.array([50.0, 51.0, 52.0, 53.0, 54.0, 55.0], dtype=np.float64)
+P838_K_H_TABLE = np.array([0.6600, 0.6811, 0.7020, 0.7228, 0.7433, 0.7635], dtype=np.float64)
+P838_GAMMA_H_TABLE = np.array(
+    [0.8084, 0.8034, 0.7987, 0.7941, 0.7896, 0.7853], dtype=np.float64
+)
+P838_K_V_TABLE = np.array([0.6472, 0.6687, 0.6901, 0.7112, 0.7321, 0.7527], dtype=np.float64)
+P838_GAMMA_V_TABLE = np.array(
+    [0.7871, 0.7826, 0.7783, 0.7741, 0.7700, 0.7661], dtype=np.float64
+)
+
+
+def _broadcast_arrays_cloud_rain(*args: np.ndarray) -> tuple[np.ndarray, ...]:
+    return np.broadcast_arrays(*args)
+
+
+def cloud_attenuation_db(
+    elevation_angle_deg: np.ndarray | float,
+    f_ghz: np.ndarray | float,
+    iclw_kg_m2: np.ndarray | float,
+    T_k: np.ndarray | float = 273.75,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Total cloud attenuation (dB), ITU-R P.840-9 (no rain path model).
+
+    Returns ``(total_cloud_atten_db, K_L)`` with broadcast shapes.
+    """
+    theta = np.asarray(elevation_angle_deg, dtype=np.float64)
+    f_GHz = np.asarray(f_ghz, dtype=np.float64)
+    iclw = np.asarray(iclw_kg_m2, dtype=np.float64)
+    T = np.asarray(T_k, dtype=np.float64)
+
+    theta, f_GHz, iclw, T = _broadcast_arrays_cloud_rain(theta, f_GHz, iclw, T)
+
+    theta_T = 300.0 / T
+    dt = theta_T - 1.0
+    eps0 = 77.66 + 103.3 * dt
+    eps1 = 0.0671 * eps0
+    eps2 = 3.52
+
+    fp = 20.20 - 146.0 * dt + 316.0 * dt**2
+    fs = 39.8 * fp
+
+    eps_pp = (f_GHz * (eps0 - eps1) / fp) / (1.0 + (f_GHz / fp) ** 2) + (
+        f_GHz * (eps1 - eps2) / fs
+    ) / (1.0 + (f_GHz / fs) ** 2)
+
+    eps_p = (eps0 - eps1) / (1.0 + (f_GHz / fp) ** 2) + (eps1 - eps2) / (
+        1.0 + (f_GHz / fs) ** 2
+    ) + eps2
+
+    eta = (2.0 + eps_p) / eps_pp
+    Kl = 0.819 * f_GHz / (eps_pp * (1.0 + eta**2))
+
+    A1 = 0.1522
+    A2 = 11.51
+    A3 = -10.4912
+    f1 = -23.9589
+    f2 = 219.2096
+    sig1 = 3.2991e3
+    sig2 = 2.7595e6
+
+    K_L = Kl * (
+        A1 * np.exp((f_GHz - f1) ** 2 / sig1)
+        + A2 * np.exp((f_GHz - f2) ** 2 / sig2)
+        + A3
+    )
+
+    sin_el = np.sin(np.deg2rad(theta))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        total = np.where(
+            np.abs(sin_el) > 1e-15,
+            K_L * iclw / sin_el,
+            np.inf,
+        )
+    return total, K_L
+
+
+def nearest_p838_freq_table_indices(f_ghz: np.ndarray) -> np.ndarray:
+    """Index in ``P838_FREQ_TABLE_GHZ`` with smallest |f - table| per element."""
+    f = np.asarray(f_ghz, dtype=np.float64)
+    dist = np.abs(f[..., np.newaxis] - P838_FREQ_TABLE_GHZ[np.newaxis, :])
+    return np.argmin(dist, axis=-1)
+
+
+def rain_attenuation_db(
+    elevation_angle_deg: np.ndarray | float,
+    f_ghz: np.ndarray | float,
+    rain_rate_mm_hr: np.ndarray | float,
+    rain_path_length_km: np.ndarray | float,
+    tau_deg: np.ndarray | float = 45.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Total rain attenuation (dB), ITU-R P.838-3 style; coefficients by nearest table frequency.
+
+    Returns ``(tot_rain_atten_db, spec_rain_atten_db_per_km, closest_freq_ghz)``.
+    """
+    theta = np.asarray(elevation_angle_deg, dtype=np.float64)
+    f = np.asarray(f_ghz, dtype=np.float64)
+    R = np.asarray(rain_rate_mm_hr, dtype=np.float64)
+    L = np.asarray(rain_path_length_km, dtype=np.float64)
+    tau = np.asarray(tau_deg, dtype=np.float64)
+
+    theta, f, R, L, tau = _broadcast_arrays_cloud_rain(theta, f, R, L, tau)
+
+    fi = nearest_p838_freq_table_indices(f)
+    k_h = P838_K_H_TABLE[fi]
+    gamma_h = P838_GAMMA_H_TABLE[fi]
+    k_v = P838_K_V_TABLE[fi]
+    gamma_v = P838_GAMMA_V_TABLE[fi]
+    closest = P838_FREQ_TABLE_GHZ[fi]
+
+    theta_r = np.deg2rad(theta)
+    tau_r = np.deg2rad(tau)
+    cth2 = np.cos(theta_r) ** 2
+    c2t = np.cos(2.0 * tau_r)
+
+    k = (k_h + k_v + (k_h - k_v) * cth2 * c2t) / 2.0
+    gamma = (k_h * gamma_h + k_v * gamma_v + (k_h * gamma_h - k_v * gamma_v) * cth2 * c2t) / (
+        2.0 * k
+    )
+
+    spec = k * np.power(R, gamma)
+
+    sin_el = np.sin(theta_r)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        tot = np.where(np.abs(sin_el) > 1e-15, (spec * L) / sin_el, np.inf)
+
+    return tot, spec, closest
+
+
+def compute_cloud_rain_attenuation_db(
+    elevation_deg: np.ndarray,
+    iclw: np.ndarray,
+    rain: np.ndarray,
+    rain_rate_mm_hr: np.ndarray,
+    freqs_ghz: np.ndarray,
+    rng: np.random.Generator,
+    *,
+    iclw_abs_threshold: float,
+    T_k: float = DEFAULT_CLOUD_WATER_TEMP_K,
+    tau_deg: float = DEFAULT_RAIN_TAU_DEG,
+    path_low_km: float = RAIN_PATH_LENGTH_UNIFORM_LOW_KM,
+    path_high_km: float = RAIN_PATH_LENGTH_UNIFORM_HIGH_KM,
+) -> np.ndarray:
+    """
+    Per-FOV, per-channel attenuation (dB), gated on ``|iclw|`` and ``rain``.
+
+    Parameters
+    ----------
+    iclw_abs_threshold
+        |ICLW| threshold (kg/m²); must be passed explicitly by the application
+        (e.g. simulation script), not a library default.
+
+    Rules
+    -----
+    - ``|iclw| <= iclw_abs_threshold`` or non-finite ``iclw`` → 0 dB.
+    - ``|iclw| >`` threshold and ``rain == 0`` → P.840-9 cloud only.
+    - ``|iclw| >`` threshold and ``rain == 1`` → P.838-3 rain only.
+
+    Cloud and rain formulas run only on the matching FOV subsets (vectorized per subset).
+
+    Returns array shaped ``(n_fov, n_chan)``.
+    """
+    elevation_deg = np.asarray(elevation_deg, dtype=np.float64)
+    iclw = np.asarray(iclw, dtype=np.float64)
+    rain = np.asarray(rain, dtype=np.int8)
+    rain_rate_mm_hr = np.maximum(np.asarray(rain_rate_mm_hr, dtype=np.float64), 0.0)
+    freqs_ghz = np.asarray(freqs_ghz, dtype=np.float64)
+
+    n = elevation_deg.size
+    n_ch = freqs_ghz.size
+    f_r = freqs_ghz[np.newaxis, :]
+
+    finite = np.isfinite(iclw)
+    high = finite & (np.abs(iclw) > iclw_abs_threshold)
+    dry_high = high & (rain == 0)
+    rain_high = high & (rain == 1)
+
+    out = np.zeros((n, n_ch), dtype=np.float64)
+
+    if np.any(dry_high):
+        tot_c, _ = cloud_attenuation_db(
+            elevation_deg[dry_high][:, np.newaxis],
+            f_r,
+            iclw[dry_high][:, np.newaxis],
+            T_k=T_k,
+        )
+        out[dry_high, :] = np.asarray(tot_c, dtype=np.float64)
+
+    if np.any(rain_high):
+        n_rh = int(np.sum(rain_high))
+        L = rng.uniform(path_low_km, path_high_km, size=n_rh)
+        tot_r_sub, _, _ = rain_attenuation_db(
+            elevation_deg[rain_high][:, np.newaxis],
+            f_r,
+            rain_rate_mm_hr[rain_high][:, np.newaxis],
+            L[:, np.newaxis],
+            tau_deg=tau_deg,
+        )
+        out[rain_high, :] = np.asarray(tot_r_sub, dtype=np.float64)
+
+    return out
+
+
+# =============================================================================
+# ITU ICLW / rain grids — per-FOV cloud + rain slant attenuation (RFI pipelines)
+# =============================================================================
+
+
+def _nearest_indices_1d(query: np.ndarray, grid: np.ndarray) -> np.ndarray:
+    grid = np.asarray(grid, dtype=np.float64)
+    q = np.asarray(query, dtype=np.float64)
+    idx_hi = np.searchsorted(grid, q, side="left")
+    idx_lo = idx_hi - 1
+    idx_lo = np.clip(idx_lo, 0, grid.size - 1)
+    idx_hi = np.clip(idx_hi, 0, grid.size - 1)
+    dist_lo = np.abs(q - grid[idx_lo])
+    dist_hi = np.abs(grid[idx_hi] - q)
+    return np.where(dist_lo <= dist_hi, idx_lo, idx_hi)
+
+
+def _align_lon_to_grid(lon_fov: np.ndarray, lon_grid_1d: np.ndarray) -> np.ndarray:
+    x = np.asarray(lon_fov, dtype=np.float64)
+    lo = float(np.min(lon_grid_1d))
+    hi = float(np.max(lon_grid_1d))
+    if lo >= 0.0 and hi > 180.0:
+        return np.mod(x, 360.0)
+    if lo < 0.0 or hi <= 180.0:
+        return (np.mod(x + 180.0, 360.0)) - 180.0
+    return x
+
+
+def load_iclw_grid(nc_path: str):
+    if Dataset is None:
+        raise ImportError("netCDF4 is required for load_iclw_grid")
+    ds = Dataset(nc_path, "r")
+    try:
+
+        def _first_var(*candidates: str):
+            for n in candidates:
+                if n in ds.variables:
+                    return ds.variables[n]
+            raise KeyError(f"None of {candidates!r} found in {nc_path}")
+
+        mean_v = _first_var("iclw_mean_val", "mean_val")
+        std_v = _first_var("iclw_stddev_val", "stddev_val")
+        lat_var = _first_var("lat", "latitude", "Latitude")
+        lon_var = _first_var("lon", "longitude", "Longitude")
+
+        for _v in (mean_v, std_v, lat_var, lon_var):
+            _v.set_auto_maskandscale(False)
+
+        mean_arr = np.asarray(mean_v[:], dtype=np.float64)
+        std_arr = np.asarray(std_v[:], dtype=np.float64)
+
+        if lat_var.ndim == 1 and lon_var.ndim == 1:
+            lat_1d = np.asarray(lat_var[:], dtype=np.float64)
+            lon_1d = np.asarray(lon_var[:], dtype=np.float64)
+            if lat_1d.size < 2 or lon_1d.size < 2:
+                raise ValueError("lat/lon must have at least 2 points each")
+
+            lat_inc = lat_1d[0] < lat_1d[-1]
+            lon_inc = lon_1d[0] < lon_1d[-1]
+            if not lat_inc:
+                lat_1d = lat_1d[::-1]
+                mean_arr = np.flip(mean_arr, axis=0)
+                std_arr = np.flip(std_arr, axis=0)
+            if not lon_inc:
+                lon_1d = lon_1d[::-1]
+                mean_arr = np.flip(mean_arr, axis=1)
+                std_arr = np.flip(std_arr, axis=1)
+
+            sh_m = mean_arr.shape
+            if sh_m == (lat_1d.size, lon_1d.size):
+                kind = "rectilinear"
+            elif sh_m == (lon_1d.size, lat_1d.size):
+                mean_arr = mean_arr.T
+                std_arr = std_arr.T
+                kind = "rectilinear"
+            else:
+                raise ValueError(
+                    f"ICLW mean shape {sh_m} incompatible with lat {lat_1d.size}, lon {lon_1d.size}"
+                )
+
+            return {
+                "kind": kind,
+                "lat_1d": lat_1d,
+                "lon_1d": lon_1d,
+                "mean": mean_arr,
+                "std": std_arr,
+            }
+
+        lat_2d = np.asarray(lat_var[:], dtype=np.float64)
+        lon_2d = np.asarray(lon_var[:], dtype=np.float64)
+        if lat_2d.shape != lon_2d.shape or mean_arr.shape != lat_2d.shape:
+            raise ValueError(
+                f"Geo2D mismatch: lat {lat_2d.shape}, lon {lon_2d.shape}, mean {mean_arr.shape}"
+            )
+        if cKDTree is None:
+            raise SystemExit("2D lat/lon grid requires scipy (cKDTree). pip install scipy")
+        pts = np.column_stack([lat_2d.ravel(), lon_2d.ravel()])
+        tree = cKDTree(pts)
+        return {
+            "kind": "kd",
+            "tree": tree,
+            "mean_flat": mean_arr.ravel(),
+            "std_flat": std_arr.ravel(),
+            "lon_lo": float(np.min(lon_2d)),
+            "lon_hi": float(np.max(lon_2d)),
+        }
+    finally:
+        ds.close()
+
+
+def map_fovs_to_mean_std(
+    lat_fov: np.ndarray,
+    lon_fov: np.ndarray,
+    grid: dict,
+) -> tuple[np.ndarray, np.ndarray]:
+    lat_fov = np.asarray(lat_fov, dtype=np.float64)
+    lon_fov = np.asarray(lon_fov, dtype=np.float64)
+
+    if grid["kind"] == "rectilinear":
+        lon_q = _align_lon_to_grid(lon_fov, grid["lon_1d"])
+        ilat = _nearest_indices_1d(lat_fov, grid["lat_1d"])
+        ilon = _nearest_indices_1d(lon_q, grid["lon_1d"])
+        mean_s = grid["mean"][ilat, ilon]
+        std_s = grid["std"][ilat, ilon]
+        return mean_s, std_s
+
+    lon_q = _align_lon_to_grid(
+        lon_fov, np.array([grid["lon_lo"], grid["lon_hi"]], dtype=np.float64)
+    )
+    q = np.column_stack([lat_fov, lon_q])
+    try:
+        _, idx = grid["tree"].query(q, workers=-1)
+    except TypeError:
+        _, idx = grid["tree"].query(q)
+    mean_s = grid["mean_flat"][idx]
+    std_s = grid["std_flat"][idx]
+    return mean_s, std_s
+
+
+def _geo2d_nearest_indices(lat_fov: np.ndarray, lon_fov: np.ndarray, grid: dict):
+    lat_fov = np.asarray(lat_fov, dtype=np.float64)
+    lon_fov = np.asarray(lon_fov, dtype=np.float64)
+
+    if grid["kind"] == "rectilinear":
+        lon_q = _align_lon_to_grid(lon_fov, grid["lon_1d"])
+        ilat = _nearest_indices_1d(lat_fov, grid["lat_1d"])
+        ilon = _nearest_indices_1d(lon_q, grid["lon_1d"])
+        return ("rectilinear", ilat, ilon)
+
+    lon_q = _align_lon_to_grid(
+        lon_fov, np.array([grid["lon_lo"], grid["lon_hi"]], dtype=np.float64)
+    )
+    q = np.column_stack([lat_fov, lon_q])
+    try:
+        _, idx = grid["tree"].query(q, workers=-1)
+    except TypeError:
+        _, idx = grid["tree"].query(q)
+    return ("kd", idx, None)
+
+
+def map_fovs_to_rain_prob_and_rate(
+    lat_fov: np.ndarray, lon_fov: np.ndarray, grid: dict
+) -> tuple[np.ndarray, np.ndarray]:
+    kind, a, b = _geo2d_nearest_indices(lat_fov, lon_fov, grid)
+    if kind == "rectilinear":
+        return (
+            np.asarray(grid["rain_prob"][a, b], dtype=np.float64),
+            np.asarray(grid["rain_rate"][a, b], dtype=np.float64),
+        )
+    return (
+        np.asarray(grid["rain_prob_flat"][a], dtype=np.float64),
+        np.asarray(grid["rain_rate_flat"][a], dtype=np.float64),
+    )
+
+
+def _coord_var(ds, *names: str):
+    for n in names:
+        if n in ds.variables:
+            return ds.variables[n]
+    raise KeyError(f"None of {names!r} found in dataset")
+
+
+def load_itu_rain_grid(nc_path: str) -> dict:
+    if Dataset is None:
+        raise ImportError("netCDF4 is required for load_itu_rain_grid")
+    ds = Dataset(nc_path, "r")
+    try:
+        rain_v = _coord_var(ds, "rain_prob")
+        try:
+            rate_v = _coord_var(ds, "rain_rate")
+        except KeyError as e:
+            raise KeyError(
+                f"Variable 'rain_rate' not found in {nc_path}; "
+                f"available: {list(ds.variables.keys())}"
+            ) from e
+        lat_var = _coord_var(ds, "lat", "latitude", "Latitude")
+        lon_var = _coord_var(ds, "lon", "longitude", "Longitude")
+
+        for _v in (rain_v, rate_v, lat_var, lon_var):
+            _v.set_auto_maskandscale(False)
+
+        rain_arr = np.asarray(rain_v[:], dtype=np.float64)
+        rate_arr = np.asarray(rate_v[:], dtype=np.float64)
+        if rain_arr.shape != rate_arr.shape:
+            raise ValueError(
+                f"rain_prob shape {rain_arr.shape} != rain_rate shape {rate_arr.shape}"
+            )
+
+        if lat_var.ndim == 1 and lon_var.ndim == 1:
+            lat_1d = np.asarray(lat_var[:], dtype=np.float64)
+            lon_1d = np.asarray(lon_var[:], dtype=np.float64)
+            if lat_1d.size < 2 or lon_1d.size < 2:
+                raise ValueError("lat/lon must have at least 2 points each")
+
+            lat_inc = lat_1d[0] < lat_1d[-1]
+            lon_inc = lon_1d[0] < lon_1d[-1]
+            if not lat_inc:
+                lat_1d = lat_1d[::-1]
+                rain_arr = np.flip(rain_arr, axis=0)
+                rate_arr = np.flip(rate_arr, axis=0)
+            if not lon_inc:
+                lon_1d = lon_1d[::-1]
+                rain_arr = np.flip(rain_arr, axis=1)
+                rate_arr = np.flip(rate_arr, axis=1)
+
+            sh = rain_arr.shape
+            if sh == (lat_1d.size, lon_1d.size):
+                pass
+            elif sh == (lon_1d.size, lat_1d.size):
+                rain_arr = rain_arr.T
+                rate_arr = rate_arr.T
+            else:
+                raise ValueError(
+                    f"rain fields shape {sh} incompatible with "
+                    f"lat {lat_1d.size}, lon {lon_1d.size}"
+                )
+
+            return {
+                "kind": "rectilinear",
+                "lat_1d": lat_1d,
+                "lon_1d": lon_1d,
+                "rain_prob": rain_arr,
+                "rain_rate": rate_arr,
+            }
+
+        lat_2d = np.asarray(lat_var[:], dtype=np.float64)
+        lon_2d = np.asarray(lon_var[:], dtype=np.float64)
+        if lat_2d.shape != lon_2d.shape or rain_arr.shape != lat_2d.shape:
+            raise ValueError(
+                f"Geo2D mismatch: lat {lat_2d.shape}, lon {lon_2d.shape}, rain fields {rain_arr.shape}"
+            )
+        if cKDTree is None:
+            raise SystemExit("2D lat/lon grid requires scipy (cKDTree). pip install scipy")
+        pts = np.column_stack([lat_2d.ravel(), lon_2d.ravel()])
+        tree = cKDTree(pts)
+        return {
+            "kind": "kd",
+            "tree": tree,
+            "rain_prob_flat": rain_arr.ravel(),
+            "rain_rate_flat": rate_arr.ravel(),
+            "lon_lo": float(np.min(lon_2d)),
+            "lon_hi": float(np.max(lon_2d)),
+        }
+    finally:
+        ds.close()
+
+
+def itu_iclw_rain_info_nc_path(combined_csv_basename: str, data_dir: str) -> str:
+    stem = os.path.splitext(combined_csv_basename)[0]
+    parts = stem.split("_")
+    if len(parts) < 2:
+        raise ValueError(
+            f"Cannot parse month from CSV stem {stem!r}; expected e.g. atms_2023080112_..."
+        )
+    dt = parts[1]
+    if not re.match(r"^\d{8,}$", dt):
+        raise ValueError(
+            f"Second underscore segment {dt!r} is not yyyymmddhh...; stem={stem!r}"
+        )
+    mm = dt[4:6]
+    return os.path.join(data_dir, f"itu_iclw_rain_info_{mm}.nc")
+
+
+def compute_cloud_rain_atten_db_for_fovs(
+    lat: np.ndarray,
+    lon: np.ndarray,
+    elevation_deg: np.ndarray,
+    itu_nc_path: str,
+    center_freqs_ghz: np.ndarray,
+    rng: np.random.Generator,
+    iclw_abs_threshold: float,
+) -> np.ndarray:
+    """
+    Vectorized cloud/rain slant attenuation (dB) per FOV per channel.
+
+    ``center_freqs_ghz`` column ``j`` corresponds to the same channel order used when
+    building the dict for ``weather_sat_nwp.copy_nc4_with_tmbr_plus_rfi``.
+
+    If ``itu_nc_path`` is missing, returns zeros (no attenuation) after a warning.
+    """
+    lat = np.asarray(lat, dtype=np.float64)
+    lon = np.asarray(lon, dtype=np.float64)
+    elevation_deg = np.asarray(elevation_deg, dtype=np.float64)
+    freqs = np.asarray(center_freqs_ghz, dtype=np.float64)
+    n = lat.size
+    n_ch = freqs.size
+    if not os.path.isfile(itu_nc_path):
+        print(
+            f"WARNING: ITU cloud/rain NetCDF not found ({itu_nc_path}); "
+            "using 0 dB attenuation for all FOVs/channels."
+        )
+        return np.zeros((n, n_ch), dtype=np.float64)
+
+    iclg = load_iclw_grid(itu_nc_path)
+    mean_s, std_s = map_fovs_to_mean_std(lat, lon, iclg)
+    noise = rng.standard_normal(size=mean_s.shape)
+    iclw = mean_s + std_s * noise
+    bad = ~np.isfinite(mean_s) | ~np.isfinite(std_s)
+    if np.any(bad):
+        iclw = np.where(bad, np.nan, iclw)
+    iclw = np.clip(iclw, 0.0, None)
+
+    rain_grid = load_itu_rain_grid(itu_nc_path)
+    rain_prob_pct, rain_rate_mm = map_fovs_to_rain_prob_and_rate(lat, lon, rain_grid)
+    u = rng.uniform(0.0, 100.0, size=rain_prob_pct.shape)
+    rain = (u < rain_prob_pct).astype(np.int8)
+    invalid_rain = ~np.isfinite(rain_prob_pct)
+    if np.any(invalid_rain):
+        rain = np.where(invalid_rain, 0, rain)
+
+    return compute_cloud_rain_attenuation_db(
+        elevation_deg,
+        iclw,
+        rain,
+        rain_rate_mm,
+        freqs,
+        rng,
+        iclw_abs_threshold=iclw_abs_threshold,
+    )
+
+
+def atten_db_to_by_channel_dict(
+    channel_numbers: Sequence[int],
+    atten_db: np.ndarray,
+) -> dict[int, np.ndarray]:
+    """Map instrument channel number -> (n_obs,) attenuation (dB); column order matches ``channel_numbers``."""
+    ch_list = [int(c) for c in channel_numbers]
+    if atten_db.shape[1] != len(ch_list):
+        raise ValueError(
+            f"atten_db has {atten_db.shape[1]} columns but {len(ch_list)} channel_numbers"
+        )
+    return {ch_list[j]: np.asarray(atten_db[:, j], dtype=np.float64) for j in range(len(ch_list))}
+
+
+# =============================================================================
 # Quick Test
 # =============================================================================
 
@@ -607,9 +1193,9 @@ if __name__ == "__main__":
     print(f"Data directory: {calc.data_dir}")
     print()
 
-    # Use same atmospheric conditions as itu_r_p676.py demo
+    # atmospheric conditions
     pressure_hpa = 1013.25
-    temperature_k = 293.15  # 20°C (same as MATLAB reference)
+    temperature_k = 293.15  # 20°C
     water_vapor_density = 7.5
 
     print("Atmospheric conditions:")

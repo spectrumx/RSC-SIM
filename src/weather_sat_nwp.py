@@ -13,7 +13,9 @@ import os
 import csv
 import math
 import re
+import shutil
 from pathlib import Path
+from typing import Dict, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -21,13 +23,14 @@ import reverse_geocoder as rg
 
 # Map reverse_geocoder's ISO 3166-1 alpha-2 codes to your 5G list
 SUPPORTED_5G_COUNTRIES = {
-    'IT': 'Italy',
-    'AE': 'UAE',
-    'PR': 'Puerto Rico',
     'US': 'USA',
-    'AU': 'Australia',
     'JP': 'Japan',
-    'IN': 'India'
+    'AU': 'Australia',
+    'SG': 'Singapore',
+    'PR': 'Puerto Rico',
+    # 'IN': 'India'
+    # 'IT': 'Italy',
+    # 'AE': 'UAE',
 }
 
 # Sensor name -> antenna beamwidth (deg) for FOV dimension calculations (cross-track scanners).
@@ -969,16 +972,22 @@ def load_ecef_lookup(filepath):
     return ecef_dict
 
 
-def combine_channel_csvs(out_dir, nc4_stem, remove_channel_files=True):
+def combine_channel_csvs(out_dir, nc4_stem, remove_channel_files=True, rfi_prefix="5G"):
     """
-    Combine per-channel RFI CSVs into one CSV (timestamp + channelN_rfi_brightness_temperature_K).
-    No satellite column in combined output. Finds files matching {nc4_stem}_5G_RFI_chN.csv.
-    Optionally remove the per-channel CSV files after writing the combined file.
+    Combine per-channel RFI CSVs into one CSV.
+
+    Columns: ``timestamp``, then ``lat`` and ``lon`` if present in the first channel file,
+    then ``saza`` (satellite zenith angle, degrees) if present, then
+    ``channelN_rfi_brightness_temperature_K`` for each channel. Lat/lon/saza are taken from
+    the first channel CSV only (same for all rows across channels in typical NWP RFI outputs).
+    No satellite column in combined output. Finds files matching
+    ``{nc4_stem}_{rfi_prefix}_RFI_chN.csv``. Optionally remove per-channel CSVs after writing.
 
     Args:
         out_dir: Directory containing channel CSVs (str or Path).
         nc4_stem: nc4 filename without extension (e.g. atms_2023080112).
         remove_channel_files: If True, delete per-channel CSVs after combining (default True).
+        rfi_prefix: Prefix for RFI filenames (default "5G"); e.g. "Starlink_Gateway" for gateway RFI.
 
     Returns:
         Path to the combined CSV file, or None if no channel files were found.
@@ -987,7 +996,8 @@ def combine_channel_csvs(out_dir, nc4_stem, remove_channel_files=True):
     if not out_dir.is_dir():
         return None
 
-    pattern = re.compile(rf"^{re.escape(nc4_stem)}_5G_RFI_ch(\d+)\.csv$")
+    safe_prefix = re.escape(rfi_prefix)
+    pattern = re.compile(rf"^{re.escape(nc4_stem)}_{safe_prefix}_RFI_ch(\d+)\.csv$")
     channel_files = []
     for f in out_dir.iterdir():
         if not f.is_file():
@@ -1007,6 +1017,11 @@ def combine_channel_csvs(out_dir, nc4_stem, remove_channel_files=True):
         return None
 
     data = {"timestamp": df0["timestamp"].values}
+    if "lat" in df0.columns and "lon" in df0.columns:
+        data["lat"] = df0["lat"].values
+        data["lon"] = df0["lon"].values
+    if "saza" in df0.columns:
+        data["saza"] = df0["saza"].values
     data[f"channel{channel_files[0][0]}_rfi_brightness_temperature_K"] = df0["rfi_brightness_temperature_K"].values
     n_rows = len(df0)
 
@@ -1017,7 +1032,7 @@ def combine_channel_csvs(out_dir, nc4_stem, remove_channel_files=True):
         data[f"channel{ch_num}_rfi_brightness_temperature_K"] = df["rfi_brightness_temperature_K"].values
 
     combined = pd.DataFrame(data)
-    out_name = f"{nc4_stem}_5G_RFI_combined.csv"
+    out_name = f"{nc4_stem}_{rfi_prefix}_RFI_combined.csv"
     out_path = out_dir / out_name
     combined.to_csv(out_path, index=False)
 
@@ -1029,3 +1044,501 @@ def combine_channel_csvs(out_dir, nc4_stem, remove_channel_files=True):
                 pass
 
     return out_path
+
+
+def sum_two_rfi_combined_csvs_by_channel(
+    out_dir,
+    nc4_stem,
+    rfi_prefix_a: str = "5G",
+    rfi_prefix_b: str = "Starlink_Gateway",
+    output_rfi_prefix: str = "5G_Starlink_Gateway",
+):
+    """
+    Sum per-channel RFI brightness temperature from two combined CSVs into one file.
+
+    Reads ``{nc4_stem}_{rfi_prefix_a}_RFI_combined.csv`` and
+    ``{nc4_stem}_{rfi_prefix_b}_RFI_combined.csv``. For each column named
+    ``channelN_rfi_brightness_temperature_K`` present in both files, the output column
+    is the element-wise sum (linear Tb). ``timestamp`` and, if present, ``lat``,
+    ``lon``, and ``saza`` are taken from the first file (``saza`` is checked against
+    the second file when both have it). Row counts must match.
+
+    Args:
+        out_dir: Directory containing the two combined CSVs.
+        nc4_stem: nc4 filename stem (e.g. atms_2023080112).
+        rfi_prefix_a: Filename prefix for the first combined CSV (default ``5G``).
+        rfi_prefix_b: Filename prefix for the second combined CSV (default ``Starlink_Gateway``).
+        output_rfi_prefix: Prefix for the output filename (default ``5G_Starlink_Gateway``).
+
+    Returns:
+        Path to ``{nc4_stem}_{output_rfi_prefix}_RFI_combined.csv``, or None if inputs
+        are missing or incompatible.
+    """
+    out_dir = Path(out_dir).resolve()
+    path_a = out_dir / f"{nc4_stem}_{rfi_prefix_a}_RFI_combined.csv"
+    path_b = out_dir / f"{nc4_stem}_{rfi_prefix_b}_RFI_combined.csv"
+    if not path_a.is_file() or not path_b.is_file():
+        return None
+
+    df_a = pd.read_csv(path_a)
+    df_b = pd.read_csv(path_b)
+    if len(df_a) != len(df_b) or "timestamp" not in df_a.columns:
+        return None
+
+    ch_pat = re.compile(r"^channel(\d+)_rfi_brightness_temperature_K$")
+    ch_cols_a = [c for c in df_a.columns if ch_pat.match(c)]
+    ch_cols_b = set(c for c in df_b.columns if ch_pat.match(c))
+    ch_cols = sorted(
+        (c for c in ch_cols_a if c in ch_cols_b),
+        key=lambda c: int(ch_pat.match(c).group(1)),
+    )
+    if not ch_cols:
+        return None
+
+    out_data = {"timestamp": df_a["timestamp"].values}
+    if "lat" in df_a.columns and "lon" in df_a.columns:
+        out_data["lat"] = df_a["lat"].values
+        out_data["lon"] = df_a["lon"].values
+    if "saza" in df_a.columns:
+        out_data["saza"] = df_a["saza"].values
+        if "saza" in df_b.columns:
+            sa_a = pd.to_numeric(df_a["saza"], errors="coerce").to_numpy(dtype=np.float64)
+            sa_b = pd.to_numeric(df_b["saza"], errors="coerce").to_numpy(dtype=np.float64)
+            if not np.allclose(sa_a, sa_b, rtol=0.0, atol=1e-4, equal_nan=True):
+                print(
+                    "WARNING: sum_two_rfi_combined_csvs_by_channel: saza differs between "
+                    f"{path_a.name} and {path_b.name}; using values from the first file."
+                )
+
+    for col in ch_cols:
+        sa = pd.to_numeric(df_a[col], errors="coerce").fillna(0.0)
+        sb = pd.to_numeric(df_b[col], errors="coerce").fillna(0.0)
+        out_data[col] = sa + sb
+
+    out_path = out_dir / f"{nc4_stem}_{output_rfi_prefix}_RFI_combined.csv"
+    pd.DataFrame(out_data).to_csv(out_path, index=False)
+    return out_path
+
+
+def _rfi_tb_table_from_combined_csv(
+    df: pd.DataFrame,
+    mask2: np.ndarray,
+    tmbr_channel_numbers_with_rfi: Sequence[int],
+    n_obs: int,
+    n_tmbr_channels: int,
+    accumulate: bool,
+    target: Optional[np.ndarray],
+    cloud_rain_atten_db_by_channel: Optional[Dict[int, np.ndarray]] = None,
+) -> np.ndarray:
+    """
+    Build or update (n_obs, n_tmbr_channels) RFI brightness temperature (K) from a combined CSV.
+
+    If ``accumulate`` is True, add into ``target`` (which must be the same shape); otherwise
+    write into ``target`` (zeroed layer) or a new zeros array if ``target`` is None.
+
+    If ``cloud_rain_atten_db_by_channel`` is set, keys are instrument channel numbers and values
+    are (n_obs,) attenuation in dB; summed RFI added to the layer is multiplied by
+    ``10**(-atten_dB/10)`` element-wise (non-finite attenuation treated as 0 dB).
+    """
+    if target is None:
+        layer = np.zeros((n_obs, n_tmbr_channels), dtype=np.float64)
+    else:
+        layer = target
+    for ch in tmbr_channel_numbers_with_rfi:
+        col = f"channel{int(ch)}_rfi_brightness_temperature_K"
+        if col not in df.columns:
+            continue
+        idx = int(ch) - 1
+        if idx < 0 or idx >= n_tmbr_channels:
+            continue
+        rfi = pd.to_numeric(df[col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64)
+        if rfi.shape[0] != n_obs:
+            raise ValueError(f"Column {col} length {rfi.shape[0]} != {n_obs}.")
+        if cloud_rain_atten_db_by_channel is not None and int(ch) in cloud_rain_atten_db_by_channel:
+            att = np.asarray(cloud_rain_atten_db_by_channel[int(ch)], dtype=np.float64)
+            fac = np.power(
+                10.0,
+                -np.where(np.isfinite(att), att, 0.0) / 10.0,
+            )
+            rfi = rfi * fac
+        ok = ~mask2[:, idx]
+        if accumulate:
+            layer[ok, idx] = layer[ok, idx] + rfi[ok]
+        else:
+            layer[ok, idx] = rfi[ok]
+    return layer
+
+
+def _rfi_tb_compact_from_combined_csv(
+    df: pd.DataFrame,
+    mask2: np.ndarray,
+    tmbr_channel_numbers_with_rfi: Sequence[int],
+    n_obs: int,
+    n_tmbr_channels: int,
+) -> tuple[np.ndarray, list[int]]:
+    """
+    RFI Tb (K) only for modeled channels: shape ``(n_obs, n_rfi)``, column order = sorted
+    instrument channel numbers. Uses the same mask as ``TMBR`` (no write where that TMBR
+    channel element is masked).
+    """
+    ch_sorted = sorted(int(c) for c in tmbr_channel_numbers_with_rfi)
+    n_rfi = len(ch_sorted)
+    layer = np.zeros((n_obs, n_rfi), dtype=np.float64)
+    for j, ch in enumerate(ch_sorted):
+        col = f"channel{int(ch)}_rfi_brightness_temperature_K"
+        if col not in df.columns:
+            continue
+        idx_tmbr = int(ch) - 1
+        if idx_tmbr < 0 or idx_tmbr >= n_tmbr_channels:
+            continue
+        rfi = pd.to_numeric(df[col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64)
+        if rfi.shape[0] != n_obs:
+            raise ValueError(f"Column {col} length {rfi.shape[0]} != {n_obs}.")
+        ok = ~mask2[:, idx_tmbr]
+        layer[ok, j] = rfi[ok]
+    return layer, ch_sorted
+
+
+def write_attenuated_combined_rfi_top5_file(
+    top5_path: Union[str, Path],
+    df_sum: pd.DataFrame,
+    df_5g: pd.DataFrame,
+    df_sl: pd.DataFrame,
+    channel_numbers: Sequence[int],
+    atten_db_by_channel: Dict[int, np.ndarray],
+) -> None:
+    """
+    Write top-5 report for (5G + gateway) RFI Tb (K) after cloud/rain path attenuation factor.
+
+    Ranking uses absolute effective Tb. Columns in output: lat, lon, saza, RFI K (no dBW).
+    """
+    top5_path = Path(top5_path)
+    lines_out: list[str] = []
+    lines_out.append("=" * 72)
+    lines_out.append(
+        "Combined 5G + Starlink gateway RFI (K) after cloud/rain attenuation factor"
+    )
+    lines_out.append("=" * 72)
+
+    n_obs = len(df_sum)
+    for ch in sorted(int(c) for c in channel_numbers):
+        col = f"channel{ch}_rfi_brightness_temperature_K"
+        if col not in df_5g.columns or col not in df_sl.columns:
+            continue
+        sa = pd.to_numeric(df_5g[col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64)
+        sb = pd.to_numeric(df_sl[col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64)
+        raw = sa + sb
+        att = np.asarray(
+            atten_db_by_channel.get(int(ch), np.zeros(n_obs, dtype=np.float64)),
+            dtype=np.float64,
+        )
+        fac = np.power(10.0, -np.where(np.isfinite(att), att, 0.0) / 10.0)
+        tb_eff = raw * fac
+
+        ch_header = f"[Combined attenuated] Channel {ch}"
+        lines_out.append(f"\n{ch_header}\n")
+        lines_out.append("  Top 5 by |RFI brightness temperature (K)| after attenuation:\n")
+
+        abs_tb = np.abs(tb_eff)
+        k = min(5, abs_tb.size)
+        if k == 0:
+            continue
+        part = np.argpartition(abs_tb, -k)[-k:]
+        idx_top5 = part[np.argsort(-abs_tb[part])]
+        for rank, row_idx in enumerate(idx_top5, start=1):
+            lat_v = df_sum["lat"].iloc[row_idx] if "lat" in df_sum.columns else ""
+            lon_v = df_sum["lon"].iloc[row_idx] if "lon" in df_sum.columns else ""
+            saza_v = (
+                df_sum["saza"].iloc[row_idx] if "saza" in df_sum.columns else ""
+            )
+            tb_v = tb_eff[row_idx]
+            line = (
+                f"    [{rank}] lat: {lat_v}, lon: {lon_v}, saza: {saza_v}, "
+                f"rfi_Tb_K_attenuated: {tb_v:.6g}"
+            )
+            lines_out.append(line + "\n")
+
+    text = "".join(lines_out)
+    top5_path.parent.mkdir(parents=True, exist_ok=True)
+    top5_path.write_text(text, encoding="utf-8")
+    print(f"\nAttenuated combined RFI top 5 written to {top5_path}")
+    print(text)
+
+
+def copy_nc4_with_tmbr_plus_rfi(
+    src_nc4: Union[str, Path],
+    dst_nc4: Union[str, Path],
+    combined_rfi_csv: Union[str, Path],
+    tmbr_channel_numbers_with_rfi: Sequence[int],
+    n_tmbr_channels: int,
+    tmbr_var_name: str = "TMBR",
+    combined_rfi_csv_5g: Optional[Union[str, Path]] = None,
+    combined_rfi_csv_starlink: Optional[Union[str, Path]] = None,
+    cloud_rain_atten_db_by_channel: Optional[Dict[int, np.ndarray]] = None,
+) -> Path:
+    """
+    Copy a netCDF-4 file and add summed RFI brightness temperature (K) into ``TMBR``.
+
+    The destination file is a byte copy of the source, then ``TMBR`` is updated in place.
+    Rows in ``combined_rfi_csv`` must match the number of observations implied by ``TMBR``
+    (product of all dimensions except the one equal to ``n_tmbr_channels``), in the same
+    order as the RFI modeling scripts (C-order ravel of leading dimensions when the channel
+    axis is last after transpose).
+
+    For each instrument channel number ``N`` in ``tmbr_channel_numbers_with_rfi``, the column
+    ``channelN_rfi_brightness_temperature_K`` (if present) is added to ``TMBR`` index ``N - 1``
+    along the channel dimension (1-based channel numbering as in ATMS/AMSU-A/SSMI-S docs).
+
+    Where ``TMBR`` is masked, that element is left unchanged.
+
+    Sets ``TMBR`` attribute ``long_name`` to
+    ``BRIGHTNESS TEMPERATURE with 5G and Starlink gateway``.
+
+    If both ``combined_rfi_csv_5g`` and ``combined_rfi_csv_starlink`` are provided and exist,
+    creates variables ``CELL_RFI`` (5G-only Tb RFI) and ``GATE_RFI`` (Starlink gateway-only
+    Tb RFI) with the same **spatial** dimensions as ``TMBR`` but a **reduced** channel axis
+    whose size equals ``len(tmbr_channel_numbers_with_rfi)`` (e.g. 7 for ATMS ch 3–9 only).
+    Dimension order matches ``TMBR`` (channel axis in the same position). The channel
+    dimension is named ``nchans_rfi`` so Panoply's default axis choice (lexicographic
+    dimension names) yields **X = channel** and **Y = obsNumber``, like ``TMBR``'s
+    ``nchans`` vs ``obsNumber``. The coordinate variable ``channel_index_rfi``
+    lists the instrument channel number for each index along ``nchans_rfi``. Attributes
+    ``long_name`` and ``units`` (``Kelvin``) are set on ``CELL_RFI`` and ``GATE_RFI``.
+
+    If ``cloud_rain_atten_db_by_channel`` is provided (instrument channel -> (n_obs,) dB),
+    writes ``CLOUD_RAIN_ATT`` (dB) on the same reduced channel grid as ``CELL_RFI`` /
+    ``GATE_RFI``, and scales the **summed** RFI added into ``TMBR`` by ``10**(-dB/10)`` per
+    FOV and channel. ``CELL_RFI`` / ``GATE_RFI`` are left as pre-attenuation Tb (K).
+
+    Args:
+        src_nc4: Original .nc4 path.
+        dst_nc4: Output path (e.g. ``.../atms_2023080112_RFI.nc4``).
+        combined_rfi_csv: Combined CSV with summed 5G+Starlink RFI Tb columns.
+        tmbr_channel_numbers_with_rfi: Instrument channels to update (e.g. 3–9 for ATMS).
+        n_tmbr_channels: Full channel count on the TMBR channel axis (22 / 15 / 24).
+        tmbr_var_name: Variable name (default ``TMBR``); matched case-insensitively if missing.
+        combined_rfi_csv_5g: Optional path to 5G-only combined RFI CSV for ``CELL_RFI``.
+        combined_rfi_csv_starlink: Optional path to Starlink-only combined RFI CSV for ``GATE_RFI``.
+        cloud_rain_atten_db_by_channel: Optional map channel -> slant attenuation (dB) per FOV.
+
+    Returns:
+        Resolved path to ``dst_nc4``.
+
+    Raises:
+        FileNotFoundError: If source or primary combined CSV is missing.
+        ValueError: If ``TMBR`` is missing, channel dimension is ambiguous, or row count mismatches.
+    """
+    try:
+        from netCDF4 import Dataset
+    except ImportError as e:
+        raise ImportError(
+            "netCDF4 is required for copy_nc4_with_tmbr_plus_rfi. Install with: pip install netCDF4"
+        ) from e
+
+    src_nc4 = Path(src_nc4).resolve()
+    dst_nc4 = Path(dst_nc4).resolve()
+    combined_rfi_csv = Path(combined_rfi_csv).resolve()
+
+    if not src_nc4.is_file():
+        raise FileNotFoundError(f"Source netCDF not found: {src_nc4}")
+    if not combined_rfi_csv.is_file():
+        raise FileNotFoundError(f"Combined RFI CSV not found: {combined_rfi_csv}")
+
+    df = pd.read_csv(combined_rfi_csv)
+    n_rows_csv = len(df)
+
+    ch_sorted = sorted(int(c) for c in tmbr_channel_numbers_with_rfi)
+    ch_lo, ch_hi = ch_sorted[0], ch_sorted[-1]
+    ch_span = f"(ch {ch_lo} - ch {ch_hi})"
+
+    path_5g = Path(combined_rfi_csv_5g).resolve() if combined_rfi_csv_5g else None
+    path_sl = Path(combined_rfi_csv_starlink).resolve() if combined_rfi_csv_starlink else None
+    df_5g: Optional[pd.DataFrame] = None
+    df_sl: Optional[pd.DataFrame] = None
+    if path_5g is not None and path_5g.is_file():
+        df_5g = pd.read_csv(path_5g)
+        if len(df_5g) != n_rows_csv:
+            raise ValueError(
+                f"5G combined CSV rows ({len(df_5g)}) != summed CSV rows ({n_rows_csv}): {path_5g}"
+            )
+    if path_sl is not None and path_sl.is_file():
+        df_sl = pd.read_csv(path_sl)
+        if len(df_sl) != n_rows_csv:
+            raise ValueError(
+                f"Starlink combined CSV rows ({len(df_sl)}) != summed CSV rows ({n_rows_csv}): {path_sl}"
+            )
+
+    shutil.copy2(src_nc4, dst_nc4)
+
+    with Dataset(dst_nc4, "r+") as ds:
+        vname = None
+        if tmbr_var_name in ds.variables:
+            vname = tmbr_var_name
+        else:
+            lower = tmbr_var_name.lower()
+            for k in ds.variables:
+                if k.lower() == lower:
+                    vname = k
+                    break
+        if vname is None:
+            raise ValueError(
+                f"Variable {tmbr_var_name!r} not found in {dst_nc4}. "
+                f"Available: {list(ds.variables.keys())}"
+            )
+
+        v = ds.variables[vname]
+        raw = v[...]
+        is_ma = np.ma.isMaskedArray(raw)
+        base = np.array(np.ma.getdata(raw), dtype=np.float64)
+        if is_ma:
+            mask = np.ma.getmaskarray(raw)
+        else:
+            mask = np.zeros(base.shape, dtype=bool)
+
+        shape = base.shape
+        ch_axes = [i for i, s in enumerate(shape) if int(s) == int(n_tmbr_channels)]
+        if len(ch_axes) != 1:
+            raise ValueError(
+                f"{vname} shape {shape}: expected exactly one dimension of size "
+                f"{n_tmbr_channels} (channel axis); found {len(ch_axes)} matching dim(s)."
+            )
+        ch_axis = ch_axes[0]
+        n_obs = int(np.prod([shape[i] for i in range(base.ndim) if i != ch_axis]))
+        if n_obs != n_rows_csv:
+            raise ValueError(
+                f"{vname} observation count ({n_obs}) does not match combined CSV rows ({n_rows_csv})."
+            )
+
+        order = [i for i in range(base.ndim) if i != ch_axis] + [ch_axis]
+        base2 = np.transpose(base, order).reshape(n_obs, n_tmbr_channels)
+        mask2 = np.transpose(mask, order).reshape(n_obs, n_tmbr_channels)
+
+        _rfi_tb_table_from_combined_csv(
+            df,
+            mask2,
+            tmbr_channel_numbers_with_rfi,
+            n_obs,
+            n_tmbr_channels,
+            accumulate=True,
+            target=base2,
+            cloud_rain_atten_db_by_channel=cloud_rain_atten_db_by_channel,
+        )
+
+        out_perm = base2.reshape([shape[i] for i in order])
+        inv_order = np.argsort(order)
+        out = np.transpose(out_perm, inv_order)
+
+        tmbr_dtype = np.dtype(v.dtype)
+        if tmbr_dtype == np.dtype(np.float64):
+            v[...] = out
+        else:
+            v[...] = out.astype(tmbr_dtype, copy=False)
+
+        try:
+            v.setncattr(
+                "long_name",
+                "BRIGHTNESS TEMPERATURE with 5G and Starlink gateway",
+            )
+        except (AttributeError, TypeError):
+            pass
+
+        write_layers = df_5g is not None and df_sl is not None
+        if not write_layers:
+            has_any = (path_5g is not None and path_5g.is_file()) or (
+                path_sl is not None and path_sl.is_file()
+            )
+            if has_any:
+                print(
+                    "WARNING: copy_nc4_with_tmbr_plus_rfi: need both 5G and Starlink Gateway "
+                    "combined CSVs to write CELL_RFI and GATE_RFI; skipping those variables."
+                )
+        else:
+            cell2, ch_order = _rfi_tb_compact_from_combined_csv(
+                df_5g,
+                mask2,
+                tmbr_channel_numbers_with_rfi,
+                n_obs,
+                n_tmbr_channels,
+            )
+            gate2, _ = _rfi_tb_compact_from_combined_csv(
+                df_sl,
+                mask2,
+                tmbr_channel_numbers_with_rfi,
+                n_obs,
+                n_tmbr_channels,
+            )
+            n_rfi_ch = cell2.shape[1]
+            spatial_sizes = [shape[order[i]] for i in range(len(order) - 1)]
+            cell_perm = cell2.reshape(spatial_sizes + [n_rfi_ch])
+            gate_perm = gate2.reshape(spatial_sizes + [n_rfi_ch])
+            out_cell = np.transpose(cell_perm, inv_order)
+            out_gate = np.transpose(gate_perm, inv_order)
+            if tmbr_dtype != np.dtype(np.float64):
+                out_cell = out_cell.astype(tmbr_dtype, copy=False)
+                out_gate = out_gate.astype(tmbr_dtype, copy=False)
+
+            # Name sorts before "obsNumber" (like "nchans") so Panoply defaults X=channel, Y=obs.
+            rfi_dim = "nchans_rfi"
+            if rfi_dim not in ds.dimensions:
+                ds.createDimension(rfi_dim, n_rfi_ch)
+            elif ds.dimensions[rfi_dim].size != n_rfi_ch:
+                raise ValueError(
+                    f"Dimension {rfi_dim!r} already exists with size "
+                    f"{ds.dimensions[rfi_dim].size}, need {n_rfi_ch}."
+                )
+
+            orig_dims = v.dimensions
+            new_dims = tuple(
+                rfi_dim if ax == ch_axis else orig_dims[ax]
+                for ax in range(len(orig_dims))
+            )
+
+            coord_name = "channel_index_rfi"
+            if coord_name not in ds.variables:
+                id_v = ds.createVariable(coord_name, "i4", (rfi_dim,))
+                id_v[:] = np.array(ch_order, dtype=np.int32)
+                id_v.setncattr(
+                    "long_name",
+                    "Instrument channel number per index along nchans_rfi",
+                )
+                id_v.setncattr(
+                    "description",
+                    "Maps CELL_RFI / GATE_RFI channel axis to TMBR channel index (value - 1).",
+                )
+
+            cell_v = ds.createVariable("CELL_RFI", tmbr_dtype, new_dims)
+            gate_v = ds.createVariable("GATE_RFI", tmbr_dtype, new_dims)
+            cell_v.setncattr("long_name", f"5G cellular network RFI {ch_span}")
+            cell_v.setncattr("units", "Kelvin")
+            cell_v.setncattr("coordinates", coord_name)
+            gate_v.setncattr("long_name", f"Starlink ground gateway RFI {ch_span}")
+            gate_v.setncattr("units", "Kelvin")
+            gate_v.setncattr("coordinates", coord_name)
+            cell_v[:] = out_cell
+            gate_v[:] = out_gate
+
+            if cloud_rain_atten_db_by_channel:
+                atten_compact = np.zeros((n_obs, n_rfi_ch), dtype=np.float64)
+                for j, chn in enumerate(ch_order):
+                    if int(chn) in cloud_rain_atten_db_by_channel:
+                        atten_compact[:, j] = cloud_rain_atten_db_by_channel[int(chn)]
+                atten_perm = atten_compact.reshape(spatial_sizes + [n_rfi_ch])
+                out_atten = np.transpose(atten_perm, inv_order)
+                cloud_v = ds.createVariable("CLOUD_RAIN_ATT", "f8", new_dims)
+                cloud_v.setncattr(
+                    "long_name",
+                    f"Cloud and rain slant attenuation {ch_span} (dB; P.840/P.838)",
+                )
+                cloud_v.setncattr("units", "dB")
+                cloud_v.setncattr("coordinates", coord_name)
+                cloud_v[:] = out_atten
+
+        if cloud_rain_atten_db_by_channel is not None and not (
+            df_5g is not None and df_sl is not None
+        ):
+            print(
+                "WARNING: copy_nc4_with_tmbr_plus_rfi: CLOUD_RAIN_ATT not written; "
+                "need both combined_rfi_csv_5g and combined_rfi_csv_starlink."
+            )
+
+    return dst_nc4
