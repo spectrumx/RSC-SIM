@@ -29,7 +29,7 @@ For realistic NWP RFI modeling you can:
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 from radio_types import Antenna
 
@@ -137,7 +137,7 @@ def gateway_boresight_unit_vector_ecef(
 
 
 def load_starlink_gateway_antenna_from_csv(
-    csv_file: str | None = None,
+    csv_file: Optional[str] = None,
     eta_rad: float = 1.0,
     valid_freqs: Tuple[float, float] = (1e9, 100e9),
 ) -> Antenna:
@@ -509,7 +509,7 @@ def model_rfi_nwp_starlink_gateway_single_time(
     n_antennas_per_gateway: int = 40,
     gateway_random_boresight: bool = True,
     gateway_boresight_pointing: bool = True,
-    gateway_boresight_random_seed: int | None = None,
+    gateway_boresight_random_seed: Optional[int] = None,
     gateway_boresight_el_min_deg: float = GATEWAY_RANDOM_EL_MIN_DEG,
     gateway_boresight_el_max_deg: float = GATEWAY_RANDOM_EL_MAX_DEG,
     temperature: float = 288.15,
@@ -738,7 +738,7 @@ def model_rfi_nwp_starlink_gateway_single_time_in_fov_first(
     n_antennas_per_gateway: int = 40,
     gateway_random_boresight: bool = True,
     gateway_boresight_pointing: bool = True,
-    gateway_boresight_random_seed: int | None = None,
+    gateway_boresight_random_seed: Optional[int] = None,
     gateway_boresight_el_min_deg: float = GATEWAY_RANDOM_EL_MIN_DEG,
     gateway_boresight_el_max_deg: float = GATEWAY_RANDOM_EL_MAX_DEG,
     temperature: float = 288.15,

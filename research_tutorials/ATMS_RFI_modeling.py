@@ -42,6 +42,7 @@ import os
 import sys
 import time as time_module
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -356,7 +357,7 @@ def run_rfi_for_channel_starlink_gateway(
     in_fov_first: bool = True,
     gateway_random_boresight: bool = True,
     gateway_boresight_pointing: bool = True,
-    gateway_boresight_random_seed: int | None = None,
+    gateway_boresight_random_seed: Optional[int] = None,
 ):
     """Run Starlink gateway RFI for one ATMS channel; write CSV (same columns as 5G)."""
     lat = data["lat"]
