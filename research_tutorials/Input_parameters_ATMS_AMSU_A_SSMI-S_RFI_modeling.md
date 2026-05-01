@@ -65,9 +65,9 @@ The model assumes interference enters the sensor via the second harmonic of the 
 
 | Variable name | Location | Unit | Description |
 |---------------|----------|------|-------------|
-| `second_harmonic_factor` | `src/weather_sat_nwp.py` (inside `model_rfi_nwp_5g_single_time()` and `model_rfi_nwp_5g_single_time_ssmis()` functions) | linear | Fraction of fundamental power at the second harmonic. Default 0.01 (i.e. -20 dBc). Multiplies the fundamental link budget before conversion to received power. |
+| `second_harmonic_factor` | `src/weather_sat_nwp.py` (inside `model_rfi_nwp_5g_single_time()` and `model_rfi_nwp_5g_single_time_ssmis()` functions) | linear | Fraction of fundamental power at the second harmonic. Default **1e-6** (i.e. **-60 dBc**). Multiplies the fundamental link budget before conversion to received power. |
 
-**Note:** This is hardcoded in the core module. Changing it requires editing `weather_sat_nwp.py`. Typical values from literature or measurements (e.g., -15 dBc to -25 dBc) can be applied by setting `second_harmonic_factor = 10**(dBc/10)` with dBc negative.
+**Note:** This is hardcoded in the core module. Changing it requires editing `weather_sat_nwp.py`. Other dBc levels: `second_harmonic_factor = 10**(dBc/10)` with dBc negative (e.g. -40 dBc → `1e-4`).
 
 ---
 
@@ -79,12 +79,13 @@ Effective EIRP per FOV is `eirp_per_emitter_dbw + 10*log10(n_emitters)`. So dens
 
 | Variable name | Location | Unit | Description |
 |---------------|----------|------|-------------|
-| `SUPPORTED_5G_COUNTRIES` | `src/weather_sat_nwp.py` | dict | Map of ISO 3166-1 alpha-2 country codes to names. Density is non-zero only for these countries. |
-| Population thresholds and density values | `src/weather_sat_nwp.py` (inside `_population_to_density()` function) | population per km²; density per km² | Logic: population > 10000 (Ultra-dense urban) → 50.0; > 5000 (Dense urban) → 30.0; > 1500 (Urban) → 15.0; > 300 (Suburban) → 5; else (Open/Rural) → 1. Units: emitter density per km². |
+| `country_5G_sensor_channel.csv` | `research_tutorials/data/` | CSV | Rows list countries; columns `country_name`, `ISO`, `ATMS`, `AMSU_A`, `SSMI_S`. A country is included for a given sensor channel when that sensor’s column equals the channel number (integer). |
+| `load_country_5g_sensor_channel_csv`, `supported_5g_countries_for_channel` | `src/weather_sat_nwp.py` | — | Load the CSV once; build `dict[str, str]` (ISO → name) per sensor and channel for `get_emitter_density_vectorized(..., supported_5g_countries=...)`. |
+| Population thresholds and density values | `src/weather_sat_nwp.py` (inside `_population_to_density()` function) | population per km²; density per km² | Logic: population > 10000 (Ultra-dense urban) → 30.0; > 5000 (Dense urban) → 15.0; > 1500 (Urban) → 5.0; > 300 (Suburban) → 3; else (Open/Rural) → 1. Units: emitter density per km². |
 
-Density is computed by `get_emitter_density_vectorized(lat, lon)` using European Union (EU) GHSL population raster and reverse geocoder library for country. Only FOVs in `SUPPORTED_5G_COUNTRIES` get non-zero density.
+Density is computed by `get_emitter_density_vectorized(lat, lon, supported_5g_countries=...)` using the European Union (EU) GHSL population raster and reverse geocoder for country. Only FOVs whose ISO code appears in the per-channel allowlist get non-zero density.
 
-**Note:** Adjust the population tiers and density values in `_population_to_density` to match deployment density (e.g., urban vs suburban vs rural), which will directly affect RFI. Adding or removing countries in `SUPPORTED_5G_COUNTRIES` changes where RFI is non-zero.
+**Note:** Adjust the population tiers and density values in `_population_to_density` to match deployment density (e.g., urban vs suburban vs rural), which will directly affect RFI. Edit `country_5G_sensor_channel.csv` to change which countries contribute emitters for each sensor channel.
 
 ### 5.2 FOV dimensions and n_emitters
 

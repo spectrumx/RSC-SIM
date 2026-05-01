@@ -21,17 +21,69 @@ import numpy as np
 import pandas as pd
 import reverse_geocoder as rg
 
-# Map reverse_geocoder's ISO 3166-1 alpha-2 codes to your 5G list
-SUPPORTED_5G_COUNTRIES = {
-    'US': 'USA',
-    'JP': 'Japan',
-    'AU': 'Australia',
-    'SG': 'Singapore',
-    'PR': 'Puerto Rico',
-    # 'IN': 'India'
-    # 'IT': 'Italy',
-    # 'AE': 'UAE',
-}
+# Per-sensor/channel 5G country allowlist from CSV (see load_country_5g_sensor_channel_csv).
+_COUNTRY_5G_CHANNEL_CSV = (
+    Path(__file__).resolve().parent.parent
+    / "research_tutorials"
+    / "data"
+    / "country_5G_sensor_channel.csv"
+)
+
+
+def load_country_5g_sensor_channel_csv(path: Optional[Path] = None) -> pd.DataFrame:
+    """
+    Load ``country_5G_sensor_channel.csv`` with columns
+    ``country_name``, ``ISO``, ``ATMS``, ``AMSU_A``, ``SSMI_S``.
+    """
+    p = path if path is not None else _COUNTRY_5G_CHANNEL_CSV
+    p = Path(p).resolve()
+    if not p.is_file():
+        raise FileNotFoundError(f"Country/sensor/channel CSV not found: {p}")
+    df = pd.read_csv(p)
+    required = ("country_name", "ISO", "ATMS", "AMSU_A", "SSMI_S")
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"CSV {p} missing columns {missing}; found {list(df.columns)}"
+        )
+    return df
+
+
+def supported_5g_countries_for_channel(
+    df: pd.DataFrame,
+    sensor: str,
+    channel_number: int,
+) -> dict[str, str]:
+    """
+    ISO code -> country name for rows where the sensor's channel column matches ``channel_number``.
+
+    CSV column ``AMSU_A`` is keyed by script sensor name ``AMSU-A``.
+    If the same ISO appears more than once, the last row wins.
+    """
+    col_map = {"ATMS": "ATMS", "AMSU-A": "AMSU_A", "SSMI-S": "SSMI_S"}
+    key = str(sensor).strip()
+    if key not in col_map:
+        raise ValueError(
+            f"Unknown sensor {sensor!r}; use one of {list(col_map.keys())}"
+        )
+    col = col_map[key]
+    ch = int(channel_number)
+    out: dict[str, str] = {}
+    for _, row in df.iterrows():
+        v = row[col]
+        if pd.isna(v):
+            continue
+        try:
+            if int(v) != ch:
+                continue
+        except (TypeError, ValueError):
+            continue
+        iso = str(row["ISO"]).strip()
+        name = str(row["country_name"]).strip()
+        if iso:
+            out[iso] = name
+    return out
+
 
 # Sensor name -> antenna beamwidth (deg) for FOV dimension calculations (cross-track scanners).
 # ATMS V-band Ch 3–9: 2.2°; AMSU-A V-band Ch 3–8: 3.3°.
@@ -107,7 +159,7 @@ def _rowcol(transform, lon: float, lat: float) -> tuple[int, int]:
     return int(r), int(c)
 
 
-def get_emitter_density(lat_lon: list) -> float:
+def get_emitter_density(lat_lon: list, *, supported_5g_countries: dict[str, str]) -> float:
     """
     Determines the number of 5G emitters per square km based on a
     [lat, lon] coordinate, terrain type, and GHSL population data.
@@ -118,6 +170,7 @@ def get_emitter_density(lat_lon: list) -> float:
 
     Args:
         lat_lon (list): A list containing [latitude, longitude].
+        supported_5g_countries: Map ISO alpha-2 -> country name for allowed 5G (caller-defined).
 
     Returns:
         float: The emitter density per square km.
@@ -155,7 +208,7 @@ def get_emitter_density(lat_lon: list) -> float:
     rg_result = rg.search((lat, lon), verbose=False)
     country_code = rg_result[0].get('cc', '')
 
-    if country_code not in SUPPORTED_5G_COUNTRIES:
+    if country_code not in supported_5g_countries:
         country_name = country_code
         terrain_type = 'terrain'
         emitter_density_per_km2 = 0.0
@@ -166,22 +219,22 @@ def get_emitter_density(lat_lon: list) -> float:
     # ---------------------------------------------------------
     # STEP 4: Supported 5G country; set terrain and density from population
     # ---------------------------------------------------------
-    country_name = SUPPORTED_5G_COUNTRIES[country_code]
+    country_name = supported_5g_countries[country_code]
     if population > 10000:
         terrain_type = 'Ultra-dense urban'
-        emitter_density_per_km2 = 40.0
+        emitter_density_per_km2 = 30.0
     elif population > 5000:
         terrain_type = 'Dense urban'
-        emitter_density_per_km2 = 25.0
+        emitter_density_per_km2 = 15.0
     elif population > 1500:
         terrain_type = 'Urban'
-        emitter_density_per_km2 = 12.0
+        emitter_density_per_km2 = 5.0
     elif population > 300:
         terrain_type = 'Suburban'
-        emitter_density_per_km2 = 3.5
+        emitter_density_per_km2 = 3.0
     else:
         terrain_type = 'Open/Rural'
-        emitter_density_per_km2 = 0.3
+        emitter_density_per_km2 = 1.0
 
     print(f"[{lat:7.4f}, {lon:8.4f}] -> Country: '{country_name}', "
           f"Population: {population:7.0f}, Terrain: '{terrain_type}', Density: {emitter_density_per_km2}")
@@ -316,24 +369,30 @@ def generate_elliptical_ground_emitter_distribution(
     }), d_max_km, d_min_km
 
 
-def _population_to_density(population: float, country_code: str) -> float:
+def _population_to_density(
+    population: float,
+    country_code: str,
+    supported_5g_countries: dict[str, str],
+) -> float:
     """Map population and country to emitter density per km^2 (no print)."""
-    if population <= 0 or country_code not in SUPPORTED_5G_COUNTRIES:
+    if population <= 0 or country_code not in supported_5g_countries:
         return 0.0
     if population > 10000:
-        return 50.0
-    if population > 5000:
         return 30.0
-    if population > 1500:
+    if population > 5000:
         return 15.0
-    if population > 300:
+    if population > 1500:
         return 5.0
+    if population > 300:
+        return 3.0
     return 1.0
 
 
 def get_emitter_density_vectorized(
     lat: np.ndarray,
     lon: np.ndarray,
+    *,
+    supported_5g_countries: dict[str, str],
     chunk_size: int = 50000,
     ghsl_tile_size: int = 256,
 ) -> np.ndarray:
@@ -348,6 +407,7 @@ def get_emitter_density_vectorized(
     Args:
         lat: Latitude array (degrees), shape (n,).
         lon: Longitude array (degrees), shape (n,).
+        supported_5g_countries: ISO alpha-2 -> country name; density is 0 outside this map.
         chunk_size: Max points per batch for reverse_geocoder (default 50000).
         ghsl_tile_size: GHSL tile size for fallback windowed reads (default 256).
 
@@ -430,7 +490,9 @@ def get_emitter_density_vectorized(
         for j, res in enumerate(results):
             cc = res.get("cc", "")
             i = inds[j]
-            density[i] = _population_to_density(float(population[i]), cc)
+            density[i] = _population_to_density(
+                float(population[i]), cc, supported_5g_countries
+            )
     return density
 
 
@@ -730,7 +792,7 @@ def model_rfi_nwp_5g_single_time(
     path_loss_ratio = np.where(
         L_fs_harm > 0, L_fs_fund / L_fs_harm, 0.0
     )
-    second_harmonic_factor = 0.01  # 2nd harmonic: -20 dBc (1% of fundamental)
+    second_harmonic_factor = 1e-6  # 2nd harmonic: -60 dBc relative to fundamental
     link_budget = (
         base_lb_fund * second_harmonic_factor * path_loss_ratio
         * (1.0 if harmonic_in_band else 0.0)
@@ -767,7 +829,7 @@ def model_rfi_nwp_5g_single_time_ssmis(
     """
     Vectorized RFI from 5G ground emitters for SSMI-S (conical scanning).
 
-    Same link budget as model_rfi_nwp_5g_single_time (ITU-R P.676, 2nd harmonic -20 dBc)
+    Same link budget as model_rfi_nwp_5g_single_time (ITU-R P.676, 2nd harmonic -60 dBc)
     but with constant slant range and elevation for all FOVs. n_emitters from fixed
     SSMI-S V-band FOV area (27 km x 18 km). Antenna gain direction (emitter_dec, emitter_caz)
     still varies by FOV for realistic pattern.
@@ -855,7 +917,7 @@ def model_rfi_nwp_5g_single_time_ssmis(
     path_loss_ratio = np.where(
         L_fs_harm > 0, L_fs_fund / L_fs_harm, 0.0
     )
-    second_harmonic_factor = 0.01  # 2nd harmonic: -20 dBc (1% of fundamental)
+    second_harmonic_factor = 1e-6  # 2nd harmonic: -60 dBc relative to fundamental
     link_budget = (
         base_lb_fund * second_harmonic_factor * path_loss_ratio
         * (1.0 if harmonic_in_band else 0.0)

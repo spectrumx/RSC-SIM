@@ -68,12 +68,14 @@ from weather_sat_nwp import (  # noqa: E402
     copy_nc4_with_tmbr_plus_rfi,
     get_emitter_density_vectorized,
     iter_valid_ts_sat_indices,
+    load_country_5g_sensor_channel_csv,
     load_ecef_lookups_for_nc4,
     model_rfi_nwp_5g_single_time_ssmis,
     said_to_satellite_array,
     SENSOR_ALLOWED_SAIDS,
     SENSOR_SAID_TO_SATELLITE,
     sum_two_rfi_combined_csvs_by_channel,
+    supported_5g_countries_for_channel,
     timestamp_from_nc4_vars,
     write_attenuated_combined_rfi_top5_file,
 )
@@ -584,10 +586,7 @@ def main():
         "else North-aligned fallback."
     )
 
-    print("Computing emitter density (vectorized)...")
-    t0_dens = time_module.perf_counter()
-    density = get_emitter_density_vectorized(data["lat"], data["lon"])
-    print(f"  Done in {time_module.perf_counter() - t0_dens:.1f} s")
+    country_df = load_country_5g_sensor_channel_csv()
 
     out_base_nc4 = os.path.splitext(os.path.basename(args.nc4))[0]
     out_dir = args.out_dir or os.path.dirname(os.path.abspath(args.nc4))
@@ -634,11 +633,21 @@ def main():
             out_csv = os.path.join(
                 out_dir, f"{out_base_nc4}_{RFI_PREFIX_5G}_RFI_ch{ch_num}.csv"
             )
-            print(
-                f"\n[5G] Channel {ch_num}: {center_freq_hz/1e9:.2f} GHz, BW={bandwidth_hz/1e6:.0f} MHz, "
+            supported = supported_5g_countries_for_channel(
+                country_df, "SSMI-S", ch_num
+            )
+            countries_line = (
+                "Country: " + ", ".join(sorted(supported.values()))
+                if supported
+                else "Country: (none)"
+            )
+            first_line = (
+                f"[5G] Channel {ch_num}: {center_freq_hz/1e9:.2f} GHz, BW={bandwidth_hz/1e6:.0f} MHz, "
                 f"emitter fundamental={emitter_fundamental_hz/1e9:.2f} GHz "
                 f"(2nd harmonic={harmonic_freq_hz/1e9:.2f} GHz)"
             )
+            print(f"\n{first_line}")
+            print(countries_line)
 
             t0_ch = time_module.perf_counter()
             if not harmonic_in_band:
@@ -658,6 +667,16 @@ def main():
                 df.to_csv(out_csv, index=False)
                 print(f"  Wrote {out_csv} ({len(df):,} rows)")
             else:
+                t0_dens = time_module.perf_counter()
+                density = get_emitter_density_vectorized(
+                    data["lat"],
+                    data["lon"],
+                    supported_5g_countries=supported,
+                )
+                print(
+                    f"  Emitter density (vectorized) in "
+                    f"{time_module.perf_counter() - t0_dens:.1f} s"
+                )
                 df = run_rfi_for_channel_5g(
                     data,
                     density,
@@ -672,11 +691,7 @@ def main():
                 )
             print(f"  [5G] Channel {ch_num} done in {time_module.perf_counter() - t0_ch:.1f} s")
 
-            ch_header = (
-                f"[5G] Channel {ch_num}: {center_freq_hz/1e9:.2f} GHz, BW={bandwidth_hz/1e6:.0f} MHz, "
-                f"emitter fundamental={emitter_fundamental_hz/1e9:.2f} GHz "
-                f"(2nd harmonic={harmonic_freq_hz/1e9:.2f} GHz)"
-            )
+            ch_header = first_line + "\n" + countries_line
             _append_top5_block(top5_file, ch_header, df)
 
         top5_file.write("\n" + "=" * 72 + "\n")

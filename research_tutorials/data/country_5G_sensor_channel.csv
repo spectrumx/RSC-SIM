@@ -1,0 +1,25 @@
+country_name,ISO,ATMS,AMSU_A,SSMI_S
+Argentina,AR,4,6,5
+Australia,AU,5,3,3
+Austria,AT,3,6,3
+Brazil,BR,5,4,4
+Chile,CL,8,5,4
+Columbia,CO,7,5,4
+Croatia,HR,6,6,3
+Denmark,DK,6,4,1
+Estonia,EE,3,3,1
+Finland,FI,7,3,4
+Greece,GR,5,6,3
+India,IN,9,8,2
+Italy,IT,7,6,3
+Japan,JP,8,8,5
+Puerto Rico,PR,7,6,5
+Russia,RU,8,4,3
+Singapore,SG,6,6,5
+Slovenia,SI,7,6,4
+South Africa,ZA,9,6,4
+Thailand,TH,6,4,2
+UAE,AE,6,7,5
+UK,GB,9,8,5
+USA,US,3,4,3
+Uruguay,UY,8,8,5
