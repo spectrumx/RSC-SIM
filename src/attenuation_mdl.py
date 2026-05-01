@@ -31,7 +31,7 @@ import re
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Sequence
+from typing import Dict, Sequence, Union
 
 try:
     from scipy.spatial import cKDTree
@@ -637,10 +637,10 @@ def _broadcast_arrays_cloud_rain(*args: np.ndarray) -> tuple[np.ndarray, ...]:
 
 
 def cloud_attenuation_db(
-    elevation_angle_deg: np.ndarray | float,
-    f_ghz: np.ndarray | float,
-    iclw_kg_m2: np.ndarray | float,
-    T_k: np.ndarray | float = 273.75,
+    elevation_angle_deg: Union[np.ndarray, float],
+    f_ghz: Union[np.ndarray, float],
+    iclw_kg_m2: Union[np.ndarray, float],
+    T_k: Union[np.ndarray, float] = 273.75,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Total cloud attenuation (dB), ITU-R P.840-9 (no rain path model).
@@ -706,11 +706,11 @@ def nearest_p838_freq_table_indices(f_ghz: np.ndarray) -> np.ndarray:
 
 
 def rain_attenuation_db(
-    elevation_angle_deg: np.ndarray | float,
-    f_ghz: np.ndarray | float,
-    rain_rate_mm_hr: np.ndarray | float,
-    rain_path_length_km: np.ndarray | float,
-    tau_deg: np.ndarray | float = 45.0,
+    elevation_angle_deg: Union[np.ndarray, float],
+    f_ghz: Union[np.ndarray, float],
+    rain_rate_mm_hr: Union[np.ndarray, float],
+    rain_path_length_km: Union[np.ndarray, float],
+    tau_deg: Union[np.ndarray, float] = 45.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Total rain attenuation (dB), ITU-R P.838-3 style; coefficients by nearest table frequency.
