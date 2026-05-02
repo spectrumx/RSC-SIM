@@ -26,6 +26,7 @@ References:
 Author: Weather Satellite RFI Modeling Team
 """
 
+import gc
 import os
 import re
 
@@ -1123,7 +1124,10 @@ def compute_cloud_rain_atten_db_for_fovs(
     ``center_freqs_ghz`` column ``j`` corresponds to the same channel order used when
     building the dict for ``weather_sat_nwp.copy_nc4_with_tmbr_plus_rfi``.
 
-    If ``itu_nc_path`` is missing, returns zeros (no attenuation) after a warning.
+    Raises ``FileNotFoundError`` if ``itu_nc_path`` is not a regular file.
+
+    After computing attenuation, drops in-memory ICLW/rain grids and related
+    arrays and runs ``gc.collect()`` before returning.
     """
     lat = np.asarray(lat, dtype=np.float64)
     lon = np.asarray(lon, dtype=np.float64)
@@ -1132,11 +1136,11 @@ def compute_cloud_rain_atten_db_for_fovs(
     n = lat.size
     n_ch = freqs.size
     if not os.path.isfile(itu_nc_path):
-        print(
-            f"WARNING: ITU cloud/rain NetCDF not found ({itu_nc_path}); "
-            "using 0 dB attenuation for all FOVs/channels."
+        raise FileNotFoundError(
+            f"ITU cloud/rain NetCDF not found: {itu_nc_path}. "
+            "Place monthly itu_iclw_rain_info_MM.nc (MM = month from observation stem) "
+            "in research_tutorials/data/ or set paths accordingly."
         )
-        return np.zeros((n, n_ch), dtype=np.float64)
 
     iclg = load_iclw_grid(itu_nc_path)
     mean_s, std_s = map_fovs_to_mean_std(lat, lon, iclg)
@@ -1155,7 +1159,7 @@ def compute_cloud_rain_atten_db_for_fovs(
     if np.any(invalid_rain):
         rain = np.where(invalid_rain, 0, rain)
 
-    return compute_cloud_rain_attenuation_db(
+    result = compute_cloud_rain_attenuation_db(
         elevation_deg,
         iclw,
         rain,
@@ -1164,6 +1168,12 @@ def compute_cloud_rain_atten_db_for_fovs(
         rng,
         iclw_abs_threshold=iclw_abs_threshold,
     )
+    # Drop NetCDF-sourced grids and intermediates (peak RAM) before returning.
+    del iclg, mean_s, std_s, noise, iclw, rain_grid
+    del rain_prob_pct, rain_rate_mm, u, rain
+    del bad, invalid_rain
+    gc.collect()
+    return result
 
 
 def atten_db_to_by_channel_dict(

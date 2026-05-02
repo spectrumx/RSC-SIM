@@ -157,7 +157,7 @@ After 5G + gateway Tb are summed per channel, slant attenuation **A** (dB, ≥ 0
 | ITU NetCDF | `research_tutorials/data/` | ICLW mean/std + `rain_prob` / `rain_rate`; used by `attenuation_mdl.load_*` / `map_fovs_*` / `compute_cloud_rain_atten_db_for_fovs`. |
 | RNG | Scripts | `np.random.default_rng(None)` for ICLW/rain draws unless you change the code. |
 
-**Note:** Missing monthly file → **0 dB** everywhere (warning). Tune `CLOUD_RAIN_ICLW_ABS_THRESHOLD` only if your cloud climatology assumptions change.
+**Note:** Missing monthly file → **FileNotFoundError** (no fallback). Tune `CLOUD_RAIN_ICLW_ABS_THRESHOLD` only if your cloud climatology assumptions change.
 
 ---
 

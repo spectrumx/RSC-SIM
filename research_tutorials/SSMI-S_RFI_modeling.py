@@ -31,6 +31,7 @@ coordinate ``channel_index_rfi`` gives instrument channel per index. Top-5 atten
 """  # noqa: E501
 
 import argparse
+import gc
 import os
 import sys
 import time as time_module
@@ -65,6 +66,7 @@ from weather_sat_mdl import (  # noqa: E402
 )
 from weather_sat_nwp import (  # noqa: E402
     calculate_ssmis_fov_bearing_vectorized,
+    clear_ghsl_raster_cache,
     combine_channel_csvs,
     copy_nc4_with_tmbr_plus_rfi,
     get_emitter_density_vectorized,
@@ -695,6 +697,9 @@ def main():
             ch_header = first_line + "\n" + countries_line
             _append_top5_block(top5_file, ch_header, df)
 
+        clear_ghsl_raster_cache()
+        gc.collect()
+
         top5_file.write("\n" + "=" * 72 + "\n")
         top5_file.write("Starlink ground gateways (direct RFI at channel center)\n")
         top5_file.write("=" * 72 + "\n")
@@ -766,6 +771,14 @@ def main():
 
     print(f"\nTop 5 summary written to {top5_path}")
 
+    # Release large inputs before CSV combine / netCDF phase to lower peak RAM.
+    del data
+    del ecef_by_satellite
+    del gateway_lat, gateway_lon
+    del v_band_antenna, emitter_antenna, gateway_antenna
+    del country_df
+    gc.collect()
+
     combined_5g = combine_channel_csvs(
         out_dir, out_base_nc4, remove_channel_files=True, rfi_prefix=RFI_PREFIX_5G
     )
@@ -823,6 +836,9 @@ def main():
                 iclw_abs_threshold=CLOUD_RAIN_ICLW_ABS_THRESHOLD,
             )
             atten_by_ch = atten_db_to_by_channel_dict(ch_nums, atten_db_cr)
+            del lat_cr, lon_cr, saza_cr, elevation_deg_cr, atten_db_cr
+            del itu_nc_cr, center_freqs_ghz_cr, rng_cr, data_dir_cr
+            gc.collect()
 
             top5_att_path = (
                 Path(out_dir) / f"{out_base_nc4}_5G_Starlink_Gateway_Attenuation_top5.txt"
@@ -847,11 +863,16 @@ def main():
                 combined_rfi_csv_5g=csv_5g,
                 combined_rfi_csv_starlink=csv_sl,
                 cloud_rain_atten_db_by_channel=atten_by_ch,
+                combined_rfi_df=df_sum_cr,
+                combined_rfi_df_5g=df_5g_cr,
+                combined_rfi_df_starlink=df_sl_cr,
             )
             print(
                 f"Wrote RFI-augmented netCDF (TMBR with cloud/rain-scaled summed RFI, CELL_RFI, GATE_RFI, "
                 f"CLOUD_RAIN_ATT on ch 1–5) to {rfi_nc4}."
             )
+        except FileNotFoundError:
+            raise
         except Exception as e:
             print(f"WARNING: Could not write {rfi_nc4.name}: {e}, likely lack of system memory in the machine")
     else:
