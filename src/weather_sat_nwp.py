@@ -152,6 +152,15 @@ def _load_ghsl_raster() -> tuple[np.ndarray, object, int, int]:
     return _GHSL_RASTER, _GHSL_TRANSFORM, _GHSL_HEIGHT, _GHSL_WIDTH
 
 
+def clear_ghsl_raster_cache() -> None:
+    """Clear the cached GHSL raster (frees RAM; next use reloads from disk)."""
+    global _GHSL_RASTER, _GHSL_TRANSFORM, _GHSL_HEIGHT, _GHSL_WIDTH
+    _GHSL_RASTER = None
+    _GHSL_TRANSFORM = None
+    _GHSL_HEIGHT = None
+    _GHSL_WIDTH = None
+
+
 def _rowcol(transform, lon: float, lat: float) -> tuple[int, int]:
     """Get (row, col) from (lon, lat); uses lazy import to avoid loading rasterio at module import."""
     from rasterio.transform import rowcol
@@ -1337,6 +1346,9 @@ def copy_nc4_with_tmbr_plus_rfi(
     combined_rfi_csv_5g: Optional[Union[str, Path]] = None,
     combined_rfi_csv_starlink: Optional[Union[str, Path]] = None,
     cloud_rain_atten_db_by_channel: Optional[Dict[int, np.ndarray]] = None,
+    combined_rfi_df: Optional[pd.DataFrame] = None,
+    combined_rfi_df_5g: Optional[pd.DataFrame] = None,
+    combined_rfi_df_starlink: Optional[pd.DataFrame] = None,
 ) -> Path:
     """
     Copy a netCDF-4 file and add summed RFI brightness temperature (K) into ``TMBR``.
@@ -1382,6 +1394,10 @@ def copy_nc4_with_tmbr_plus_rfi(
         combined_rfi_csv_5g: Optional path to 5G-only combined RFI CSV for ``CELL_RFI``.
         combined_rfi_csv_starlink: Optional path to Starlink-only combined RFI CSV for ``GATE_RFI``.
         cloud_rain_atten_db_by_channel: Optional map channel -> slant attenuation (dB) per FOV.
+        combined_rfi_df: If set, use this DataFrame instead of reading ``combined_rfi_csv``
+            again (lowers peak RAM when the caller already loaded it).
+        combined_rfi_df_5g: Same for the 5G combined CSV (must match row count of summed CSV).
+        combined_rfi_df_starlink: Same for the Starlink combined CSV.
 
     Returns:
         Resolved path to ``dst_nc4``.
@@ -1406,8 +1422,12 @@ def copy_nc4_with_tmbr_plus_rfi(
     if not combined_rfi_csv.is_file():
         raise FileNotFoundError(f"Combined RFI CSV not found: {combined_rfi_csv}")
 
-    df = pd.read_csv(combined_rfi_csv)
-    n_rows_csv = len(df)
+    if combined_rfi_df is not None:
+        df = combined_rfi_df
+        n_rows_csv = len(df)
+    else:
+        df = pd.read_csv(combined_rfi_csv)
+        n_rows_csv = len(df)
 
     ch_sorted = sorted(int(c) for c in tmbr_channel_numbers_with_rfi)
     ch_lo, ch_hi = ch_sorted[0], ch_sorted[-1]
@@ -1417,13 +1437,25 @@ def copy_nc4_with_tmbr_plus_rfi(
     path_sl = Path(combined_rfi_csv_starlink).resolve() if combined_rfi_csv_starlink else None
     df_5g: Optional[pd.DataFrame] = None
     df_sl: Optional[pd.DataFrame] = None
-    if path_5g is not None and path_5g.is_file():
+    if combined_rfi_df_5g is not None:
+        df_5g = combined_rfi_df_5g
+        if len(df_5g) != n_rows_csv:
+            raise ValueError(
+                f"5G combined DataFrame rows ({len(df_5g)}) != summed CSV rows ({n_rows_csv})"
+            )
+    elif path_5g is not None and path_5g.is_file():
         df_5g = pd.read_csv(path_5g)
         if len(df_5g) != n_rows_csv:
             raise ValueError(
                 f"5G combined CSV rows ({len(df_5g)}) != summed CSV rows ({n_rows_csv}): {path_5g}"
             )
-    if path_sl is not None and path_sl.is_file():
+    if combined_rfi_df_starlink is not None:
+        df_sl = combined_rfi_df_starlink
+        if len(df_sl) != n_rows_csv:
+            raise ValueError(
+                f"Starlink combined DataFrame rows ({len(df_sl)}) != summed CSV rows ({n_rows_csv})"
+            )
+    elif path_sl is not None and path_sl.is_file():
         df_sl = pd.read_csv(path_sl)
         if len(df_sl) != n_rows_csv:
             raise ValueError(
@@ -1506,8 +1538,11 @@ def copy_nc4_with_tmbr_plus_rfi(
 
         write_layers = df_5g is not None and df_sl is not None
         if not write_layers:
-            has_any = (path_5g is not None and path_5g.is_file()) or (
-                path_sl is not None and path_sl.is_file()
+            has_any = (
+                (path_5g is not None and path_5g.is_file())
+                or (path_sl is not None and path_sl.is_file())
+                or (combined_rfi_df_5g is not None)
+                or (combined_rfi_df_starlink is not None)
             )
             if has_any:
                 print(

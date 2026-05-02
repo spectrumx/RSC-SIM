@@ -11,7 +11,7 @@ Procedure to run **5G ground-emitter** and **Starlink ground gateway** RFI for w
 European Union's Global Human Settlement Layer (GHSL) Population data (GHG-POP) needs to be downloaded from EU [Global Human Settlement Layer (GHSL)](https://human-settlement.emergency.copernicus.eu/download.php?ds=pop) for Epoch: 2025, Resolution: 30 arcsec (~1 km²), and Coordinate system: WGS84. It is zip compressed but only `GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif` file is required. Please place it at `research_tutorials/data/`. It is used for 5G ground emitter density in ATMS/AMSU-A/SSMI-S RFI scripts.
 
 ## 1-1. Download monthly ITU grids (`itu_iclw_rain_info_MM.nc`)
-ITU cloud/rain grid file contains monthly mean/std of the integrated cloud liquid water content and rain fields for the consideration of cloud/rain attenuation. Place `itu_iclw_rain_info_MM.nc` (e.g. `…_08.nc` for August) in `research_tutorials/data/`. Month **MM** is inferred from the date token in the nc4/CSV stem (same rule as the scripts). If the file is missing, attenuation defaults to **0 dB** (warning only). Note that since the file size is large, they are stored in a cloud storage.
+ITU cloud/rain grid file contains monthly mean/std of the integrated cloud liquid water content and rain fields for the consideration of cloud/rain attenuation. Place `itu_iclw_rain_info_MM.nc` (e.g. `…_08.nc` for August) in `research_tutorials/data/`. Month **MM** is inferred from the date token in the nc4/CSV stem (same rule as the scripts). If the file is missing, the RFI scripts raise **FileNotFoundError** (no silent 0 dB fallback). Note that since the file size is large, they are stored in a cloud storage.
 
 ---
 
