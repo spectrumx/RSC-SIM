@@ -12,7 +12,7 @@ Brief instructions for the three-step pipeline that produces ECEF lookup CSVs us
 - **AMSU-A/** — nc4 files for AMSU-A sensor (NOAA-15, NOAA-18, NOAA-19, METOP-B, METOP-C)
 - **SSMI-S/** — nc4 files for SSMI-S sensor (DMSP-F17)
 
-**2. Place nc4 files** in the corresponding sensor directory (e.g. `atms_2023080112.nc4` in `ATMS/`).
+**2. Place nc4 files** in the corresponding sensor directory (e.g. `atms.2023080112.nc4` in `ATMS/`).
 
 **3. SAID (Satellite ID)** in the nc4 file identifies which satellite each observation comes from:
 
@@ -37,19 +37,19 @@ research_tutorials/util/
     NOAA-15_TLE.txt
     ...
   ATMS/                          # sensor dir; nc4 files here
-    atms_2023080112.nc4
-    SUOMI-NPP_timestamp_atms_2023080112.csv    # from TLE02 (split by SAID)
-    JPSS-1_timestamp_atms_2023080112.csv
-    SUOMI-NPP_ECEF_lookup_atms_2023080112.csv  # from TLE03
-    JPSS-1_ECEF_lookup_atms_2023080112.csv
+    atms.2023080112.nc4
+    SUOMI-NPP_timestamp_atms.2023080112.csv    # from TLE02 (split by SAID)
+    JPSS-1_timestamp_atms.2023080112.csv
+    SUOMI-NPP_ECEF_lookup_atms.2023080112.csv  # from TLE03
+    JPSS-1_ECEF_lookup_atms.2023080112.csv
     ...
   AMSU-A/
-    amsua_2023080112.nc4
-    NOAA-15_timestamp_amsua_2023080112.csv
+    amsua.2023080112.nc4
+    NOAA-15_timestamp_amsua.2023080112.csv
     ...
   SSMI-S/
-    ssmis_2023080112.nc4
-    DMSP-F17_timestamp_ssmis_2023080112.csv
+    ssmis.2023080112.nc4
+    DMSP-F17_timestamp_ssmis.2023080112.csv
     ...
   TLE01_download_tle_archive.py
   TLE02_generate_timestamps_csv_from_nc4.py
@@ -87,7 +87,7 @@ python TLE02_generate_timestamps_csv_from_nc4.py --input-dir SSMI-S
 ```
 
 - **Input:** sensor directory (ATMS, AMSU-A, or SSMI-S) containing .nc4 files. Directory name must be one of these sensor names.
-- **Output:** For each nc4 file, one `{satellite}_timestamp_{nc4_stem}.csv` **per satellite present** in that file (e.g. for `atms_2023080112.nc4` → `SUOMI-NPP_timestamp_atms_2023080112.csv` and `JPSS-1_timestamp_atms_2023080112.csv`).
+- **Output:** For each nc4 file, one `{satellite}_timestamp_{nc4_stem}.csv` **per satellite present** in that file (e.g. for `atms.2023080112.nc4` → `SUOMI-NPP_timestamp_atms.2023080112.csv` and `JPSS-1_timestamp_atms.2023080112.csv`).
 
 ---
 

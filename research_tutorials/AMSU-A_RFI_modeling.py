@@ -17,7 +17,7 @@ OOBE for 5G. Cloud/rain slant attenuation scales summed RFI into ``TMBR`` and is
 Usage:
   python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 path [--out_dir dir] [--gateways_csv path]
 
-  python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 util/AMSU-A/amsua_2023080112.nc4 --out_dir util/AMSU-A
+  python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 util/AMSU-A/amsua.2023080112.nc4 --out_dir util/AMSU-A
 
 Also writes ``<stem>_RFI.nc4``: ``TMBR`` (updated long_name) + summed RFI Tb on ch 3–8 after cloud/rain factor;
 ``CELL_RFI`` / ``GATE_RFI`` hold 5G-only and gateway-only Tb (K) on a compact channel axis (ch 3–8 only);
@@ -849,6 +849,8 @@ def main():
                 f"CLOUD_RAIN_ATT on ch 3–8) to {rfi_nc4}."
             )
         except FileNotFoundError:
+            raise
+        except ValueError:
             raise
         except Exception as e:
             print(f"WARNING: Could not write {rfi_nc4.name}: {e}, likely lack of system memory in the machine")

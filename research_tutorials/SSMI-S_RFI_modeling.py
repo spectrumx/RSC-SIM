@@ -21,7 +21,7 @@ for 5G. Cloud/rain slant attenuation scales summed RFI into ``TMBR`` and is in `
 Usage:
   python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 path [--out_dir dir] [--gateways_csv path]
 
-  python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 util/SSMI-S/ssmis_2023080112.nc4 --out_dir util/SSMI-S
+  python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 util/SSMI-S/ssmis.2023080112.nc4 --out_dir util/SSMI-S
 
 Also writes ``<stem>_RFI.nc4``: ``TMBR`` (updated long_name) + summed RFI Tb on ch 1–5 after cloud/rain factor;
 ``CELL_RFI`` / ``GATE_RFI`` hold 5G-only and gateway-only Tb (K) on a compact channel axis (ch 1–5 only);
@@ -872,6 +872,8 @@ def main():
                 f"CLOUD_RAIN_ATT on ch 1–5) to {rfi_nc4}."
             )
         except FileNotFoundError:
+            raise
+        except ValueError:
             raise
         except Exception as e:
             print(f"WARNING: Could not write {rfi_nc4.name}: {e}, likely lack of system memory in the machine")

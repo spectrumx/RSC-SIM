@@ -23,7 +23,7 @@ and is stored as ``CLOUD_RAIN_ATT`` (dB) in ``*_RFI.nc4`` (see ``attenuation_mdl
 Usage:
   python ATMS_RFI_modeling.py --sensor ATMS --nc4 path [--out_dir dir] [--gateways_csv path]
 
-  python ATMS_RFI_modeling.py --sensor ATMS --nc4 util/ATMS/atms_2023080112.nc4 --out_dir util/ATMS
+  python ATMS_RFI_modeling.py --sensor ATMS --nc4 util/ATMS/atms.2023080112.nc4 --out_dir util/ATMS
 
 Outputs (in out_dir, with nc4 stem as prefix):
   Per-channel: *_5G_RFI_chN.csv, *_Starlink_Gateway_RFI_chN.csv
@@ -462,7 +462,7 @@ def main():
     parser.add_argument(
         "--nc4",
         required=True,
-        help="Path to ATMS netCDF-4 file (e.g. util/ATMS/atms_2023080112.nc4).",
+        help="Path to ATMS netCDF-4 file (e.g. util/ATMS/atms.2023080112.nc4).",
     )
     parser.add_argument(
         "--out_dir",
@@ -874,6 +874,8 @@ def main():
                 f"CLOUD_RAIN_ATT on ch 3–9) to {rfi_nc4}."
             )
         except FileNotFoundError:
+            raise
+        except ValueError:
             raise
         except Exception as e:
             print(f"WARNING: Could not write {rfi_nc4.name}: {e}, likely lack of system memory in the machine")
