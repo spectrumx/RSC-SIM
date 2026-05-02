@@ -11,7 +11,7 @@ Procedure to run **5G ground-emitter** and **Starlink ground gateway** RFI for w
 European Union's Global Human Settlement Layer (GHSL) Population data (GHG-POP) needs to be downloaded from EU [Global Human Settlement Layer (GHSL)](https://human-settlement.emergency.copernicus.eu/download.php?ds=pop) for Epoch: 2025, Resolution: 30 arcsec (~1 km²), and Coordinate system: WGS84. It is zip compressed but only `GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif` file is required. Please place it at `research_tutorials/data/`. It is used for 5G ground emitter density in ATMS/AMSU-A/SSMI-S RFI scripts.
 
 ## 1-1. Download monthly ITU grids (`itu_iclw_rain_info_MM.nc`)
-ITU cloud/rain grid file contains monthly mean/std of the integrated cloud liquid water content and rain fields for the consideration of cloud/rain attenuation. Place `itu_iclw_rain_info_MM.nc` (e.g. `…_08.nc` for August) in `research_tutorials/data/`. Month **MM** is inferred from the date token in the nc4/CSV stem (same rule as the scripts). If the file is missing, the RFI scripts raise **FileNotFoundError** (no silent 0 dB fallback). Note that since the file size is large, they are stored in a cloud storage.
+ITU cloud/rain grid file contains monthly mean/std of the integrated cloud liquid water content and rain fields for the consideration of cloud/rain attenuation. Place `itu_iclw_rain_info_MM.nc` (e.g. `…_08.nc` for August) in `research_tutorials/data/`. Month **MM** is inferred from the date token in the nc4/CSV stem: either ``sensor_yyyymmddhh...`` or ``sensor.yyyymmddhh...`` before the first ``_5G_`` segment (same rule as ``itu_iclw_rain_info_nc_path`` in ``attenuation_mdl``). If the file is missing, the RFI scripts raise **FileNotFoundError** (no silent 0 dB fallback). Note that since the file size is large, they are stored in a cloud storage.
 
 ---
 
@@ -39,19 +39,19 @@ research_tutorials/
       DMSP-F17_TLE.txt
       ...
     ATMS/
-      atms_2023080112.nc4
-      SUOMI-NPP_timestamp_atms_2023080112.csv
-      JPSS-1_timestamp_atms_2023080112.csv
-      SUOMI-NPP_ECEF_lookup_atms_2023080112.csv
-      JPSS-1_ECEF_lookup_atms_2023080112.csv
+      atms.2023080112.nc4
+      SUOMI-NPP_timestamp_atms.2023080112.csv
+      JPSS-1_timestamp_atms.2023080112.csv
+      SUOMI-NPP_ECEF_lookup_atms.2023080112.csv
+      JPSS-1_ECEF_lookup_atms.2023080112.csv
       ...
     AMSU-A/
-      amsua_2023080112.nc4
-      NOAA-15_ECEF_lookup_amsua_2023080112.csv
+      amsua.2023080112.nc4
+      NOAA-15_ECEF_lookup_amsua.2023080112.csv
       ...
     SSMI-S/
-      ssmis_2023080112.nc4
-      DMSP-F17_ECEF_lookup_ssmis_2023080112.csv
+      ssmis.2023080112.nc4
+      DMSP-F17_ECEF_lookup_ssmis.2023080112.csv
       ...
   ATMS_RFI_modeling.py
   AMSU-A_RFI_modeling.py
@@ -81,7 +81,7 @@ An example command is provided at each RFI modeling script (e.g., `ATMS_RFI_mode
 ### ATMS (SUOMI-NPP, JPSS-1; SAID 224, 225)
 
 ```bash
-python ATMS_RFI_modeling.py --sensor ATMS --nc4 util/ATMS/atms_2023080112.nc4 --out_dir util/ATMS
+python ATMS_RFI_modeling.py --sensor ATMS --nc4 util/ATMS/atms.2023080112.nc4 --out_dir util/ATMS
 ```
 
 Outputs: per-channel **5G** and **Starlink_Gateway** CSVs; combined and **summed** CSVs; top-5 text files; **`{stem}_RFI.nc4`**. Per-channel CSVs (ch 3–9) include timestamp, satellite, lat, lon, saza, `rfi_power_dBW`, `rfi_brightness_temperature_K`.
@@ -89,7 +89,7 @@ Outputs: per-channel **5G** and **Starlink_Gateway** CSVs; combined and **summed
 ### AMSU-A (NOAA-15/18/19, METOP-B/C)
 
 ```bash
-python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 util/AMSU-A/amsua_2023080112.nc4 --out_dir util/AMSU-A
+python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 util/AMSU-A/amsua.2023080112.nc4 --out_dir util/AMSU-A
 ```
 
 Outputs: same pattern as ATMS for channels **3–8**.
@@ -97,7 +97,7 @@ Outputs: same pattern as ATMS for channels **3–8**.
 ### SSMI-S (only SAID 285 = DMSP-F17; SAID 286 and others get RFI = 0)
 
 ```bash
-python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 util/SSMI-S/ssmis_2023080112.nc4 --out_dir util/SSMI-S
+python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 util/SSMI-S/ssmis.2023080112.nc4 --out_dir util/SSMI-S
 ```
 
 Outputs: same dual-source pattern for channels **1–5**. Per-channel CSVs omit **SAZA**; combined Tb CSVs are timestamp + channel columns only (no satellite column).

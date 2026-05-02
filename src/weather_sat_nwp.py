@@ -997,7 +997,7 @@ def iter_valid_ts_sat_indices(timestamps, satellite, allowed, ecef_by_satellite)
 def load_ecef_lookups_for_nc4(nc4_path: str) -> dict:
     """
     Load all ECEF lookup CSVs for the given nc4 file from the same directory.
-    nc4_path e.g. util/ATMS/atms_2023080112.nc4 → finds *_ECEF_lookup_atms_2023080112.csv,
+    nc4_path e.g. util/ATMS/atms.2023080112.nc4 → finds *_ECEF_lookup_atms.2023080112.csv,
     parses satellite name from each filename, returns dict[satellite_name] -> ecef_lookup (timestamp -> (X,Y,Z)).
     """
     path = Path(nc4_path).resolve()
@@ -1056,7 +1056,7 @@ def combine_channel_csvs(out_dir, nc4_stem, remove_channel_files=True, rfi_prefi
 
     Args:
         out_dir: Directory containing channel CSVs (str or Path).
-        nc4_stem: nc4 filename without extension (e.g. atms_2023080112).
+        nc4_stem: nc4 filename without extension (e.g. atms.2023080112).
         remove_channel_files: If True, delete per-channel CSVs after combining (default True).
         rfi_prefix: Prefix for RFI filenames (default "5G"); e.g. "Starlink_Gateway" for gateway RFI.
 
@@ -1136,7 +1136,7 @@ def sum_two_rfi_combined_csvs_by_channel(
 
     Args:
         out_dir: Directory containing the two combined CSVs.
-        nc4_stem: nc4 filename stem (e.g. atms_2023080112).
+        nc4_stem: nc4 filename stem (e.g. atms.2023080112).
         rfi_prefix_a: Filename prefix for the first combined CSV (default ``5G``).
         rfi_prefix_b: Filename prefix for the second combined CSV (default ``Starlink_Gateway``).
         output_rfi_prefix: Prefix for the output filename (default ``5G_Starlink_Gateway``).
@@ -1386,7 +1386,7 @@ def copy_nc4_with_tmbr_plus_rfi(
 
     Args:
         src_nc4: Original .nc4 path.
-        dst_nc4: Output path (e.g. ``.../atms_2023080112_RFI.nc4``).
+        dst_nc4: Output path (e.g. ``.../atms.2023080112_RFI.nc4``).
         combined_rfi_csv: Combined CSV with summed 5G+Starlink RFI Tb columns.
         tmbr_channel_numbers_with_rfi: Instrument channels to update (e.g. 3–9 for ATMS).
         n_tmbr_channels: Full channel count on the TMBR channel axis (22 / 15 / 24).

@@ -11,7 +11,7 @@ This directory holds **TLE (Two-Line Element) and ECEF pre-processing** tools us
 
 - **Sensor-based directories** (**ATMS/**, **AMSU-A/**, **SSMI-S/**): Each contains:
   - nc4 sensor observation files (one file can include data from multiple satellites, distinguished by the SAID variable).
-  - After TLE02 and TLE03: per-satellite `*_timestamp_*.csv` and `*_ECEF_lookup_*.csv` files (e.g. `SUOMI-NPP_timestamp_atms_2023080112.csv`, `JPSS-1_ECEF_lookup_atms_2023080112.csv`).
+  - After TLE02 and TLE03: per-satellite `*_timestamp_*.csv` and `*_ECEF_lookup_*.csv` files (e.g. `SUOMI-NPP_timestamp_atms.2023080112.csv`, `JPSS-1_ECEF_lookup_atms.2023080112.csv`).
   - RFI modeling scripts use the same sensor directory to find the nc4 and the matching ECEF lookups per satellite.
 
 Run TLE02 and TLE03 from this directory (or adjust paths). For the full pipeline and directory layout, see **[README_TLE01_TLE02_TLE03.md](README_TLE01_TLE02_TLE03.md)**.

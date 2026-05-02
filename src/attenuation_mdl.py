@@ -1094,16 +1094,20 @@ def load_itu_rain_grid(nc_path: str) -> dict:
 
 
 def itu_iclw_rain_info_nc_path(combined_csv_basename: str, data_dir: str) -> str:
+    """Return ``itu_iclw_rain_info_MM.nc`` path; month from ``sensor_yyyymmddhh...`` or ``sensor.yyyymmddhh...`` stem."""
     stem = os.path.splitext(combined_csv_basename)[0]
     parts = stem.split("_")
-    if len(parts) < 2:
+    dt = None
+    if len(parts) >= 2 and re.match(r"^\d{8,}$", parts[1]):
+        dt = parts[1]
+    else:
+        m = re.search(r"(\d{8,})", stem)
+        if m:
+            dt = m.group(1)
+    if dt is None:
         raise ValueError(
-            f"Cannot parse month from CSV stem {stem!r}; expected e.g. atms_2023080112_..."
-        )
-    dt = parts[1]
-    if not re.match(r"^\d{8,}$", dt):
-        raise ValueError(
-            f"Second underscore segment {dt!r} is not yyyymmddhh...; stem={stem!r}"
+            f"Cannot parse yyyymmdd... datetime from stem {stem!r}; "
+            "expected e.g. atms_2023080112_... or atms.2023080112_..."
         )
     mm = dt[4:6]
     return os.path.join(data_dir, f"itu_iclw_rain_info_{mm}.nc")
