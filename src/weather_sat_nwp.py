@@ -961,12 +961,15 @@ def model_rfi_nwp_5g_single_time_ssmis(
 
 
 # -----------------------------------------------------------------------------
-# NC4 missing-value sentinel (product fill; colleague-confirmed). HMSL in meters.
-# Nominal missing is ~1e11; float32 rounding yields values slightly below 10e10, so
-# detection uses ``>= NC4_MISSING_FLOAT_MIN``, not exact equality to ``NC4_MISSING_FLOAT``.
+# NC4 missing-value sentinel (product fill; colleague-confirmed).
+# Most float fields: nominal missing ~1e11; float32 rounding yields values slightly below
+# ``10e10``; detection uses ``>= NC4_MISSING_FLOAT_MIN``, not exact equality to
+# ``NC4_MISSING_FLOAT``. **HMSL** (meters) uses ``NC4_MISSING_HMSL_VALUE`` only, not the
+# large-sentinel band.
 # -----------------------------------------------------------------------------
 NC4_MISSING_FLOAT = 10e10  # nominal 1e11 (attrs / documentation)
 NC4_MISSING_FLOAT_MIN = 1e10  # treat finite values >= this as the large missing sentinel band
+NC4_MISSING_HMSL_VALUE = -9999.0  # HMSL missing in nc4 (not ~1e11)
 # Placeholder written to augmented ``TMBR`` when pre-existing Tb is invalid (not ``10e10``).
 NC4_MISSING_TMBR_OUT_RFI_NC4 = 1e10
 DEFAULT_LEO_ALTITUDE_M = 850_000.0
@@ -1010,11 +1013,12 @@ def scalar_altitude_m_from_hmsl(
     """
     Mean HMSL (m) ignoring missing cells; ``default_m`` if no valid samples.
 
-    Missing cells use ``replace_missing_with_nan`` (``>= NC4_MISSING_FLOAT_MIN`` band or
-    exact small ``fill``), then nanmean.
+    By default, HMSL missing is ``NC4_MISSING_HMSL_VALUE`` (``-9999``), not the large
+    ``~1e11`` sentinel. Pass ``fill`` explicitly to override (e.g. ``NC4_MISSING_FLOAT``
+    if a product encodes HMSL that way). ``replace_missing_with_nan`` then ``nanmean``.
     """
     if fill is None:
-        fill = NC4_MISSING_FLOAT
+        fill = NC4_MISSING_HMSL_VALUE
     if default_m is None:
         default_m = DEFAULT_LEO_ALTITUDE_M
     a = replace_missing_with_nan(np.asarray(alt_1d, dtype=np.float64), fill=fill)
