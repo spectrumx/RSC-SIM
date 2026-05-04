@@ -4,6 +4,8 @@ Procedure to run **5G ground-emitter** and **Starlink ground gateway** RFI for w
 
 - Note that this will require large disk space due to the file sizes of .nc4 files and generated output CSVs.
 
+Some input nc4 products encode **missing** float fields near **`1e11`** (nominal **`10e10`**, often slightly lower after float32 storage, e.g. **`~9.9999997952e10`**). **`src/weather_sat_nwp.py`** treats finite values **`>= NC4_MISSING_FLOAT_MIN` (`1e10`)** as that sentinel (`NC4_MISSING_FLOAT`, `replace_missing_with_nan`, `obs_valid_cross_track` / `obs_valid_ssmis_conical`, `scalar_altitude_m_from_hmsl`). Loaders in **`ATMS_RFI_modeling.py`**, **`AMSU-A_RFI_modeling.py`**, and **`SSMI-S_RFI_modeling.py`** use those helpers: geo/time fields become **NaN** where missing; **HMSL** (ATMS/AMSU-A only) becomes the **mean of valid heights** or **`DEFAULT_LEO_ALTITUDE_M` (850 km)** if all missing. Invalid rows keep **row order** but get **no RFI** (default -300 dBW / 0 K); CSV lat/lon/saza may be **NaN**; cloud/rain attenuation uses **0 dB** for rows with non-finite lat/lon when building `{stem}_RFI.nc4`.
+
 ---
 
 ## 1. Download GHS-POP data (`GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif`)
@@ -69,7 +71,7 @@ research_tutorials/
   Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md
 ```
 
-After a successful run, the sensor directory typically gains (names depend on channel set): `{stem}_5G_RFI_ch*.csv`, `{stem}_Starlink_Gateway_RFI_ch*.csv`, combined `*_5G_RFI_combined.csv` and `*_Starlink_Gateway_RFI_combined.csv`, summed `*_5G_Starlink_Gateway_RFI_combined.csv`, `*_5G_Starlink_Gateway_top5.txt`, `*_5G_Starlink_Gateway_Attenuation_top5.txt` (effective Tb after path loss), and **`{stem}_RFI.nc4`** (copy of input nc4 with `TMBR` updated, plus `CELL_RFI`, `GATE_RFI`, `CLOUD_RAIN_ATT` on the compact channel axis).
+After a successful run, the sensor directory typically gains (names depend on channel set): `{stem}_5G_RFI_ch*.csv`, `{stem}_Starlink_Gateway_RFI_ch*.csv`, combined `*_5G_RFI_combined.csv` and `*_Starlink_Gateway_RFI_combined.csv`, summed `*_5G_Starlink_Gateway_RFI_combined.csv`, `*_5G_Starlink_Gateway_top5.txt`, `*_5G_Starlink_Gateway_Attenuation_top5.txt` (effective Tb after path loss), and **`{stem}_RFI.nc4`** (copy of input nc4 with `TMBR` updated, plus `CELL_RFI`, `GATE_RFI`, `CLOUD_RAIN_ATT` on the compact channel axis). Where pre-existing `TMBR` is missing (masked, non-finite, or large fill with value **`>= 1e10`**, plus other `_FillValue` / `missing_value` matches), those cells for modeled channels are written as **`1e10`** (`NC4_MISSING_TMBR_OUT_RFI_NC4` in code; not the product fill `10e10`) and no RFI increment is applied there; **`CELL_RFI` / `GATE_RFI`** still hold **pre-attenuation** RFI Tb from the combined CSVs on those cells (diagnostic), except where the netCDF **mask** on `TMBR` suppresses writes.
 
 ---
 
