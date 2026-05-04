@@ -68,7 +68,10 @@ from weather_sat_nwp import (  # noqa: E402
     load_country_5g_sensor_channel_csv,
     load_ecef_lookups_for_nc4,
     model_rfi_nwp_5g_single_time,
+    obs_valid_cross_track,
+    replace_missing_with_nan,
     said_to_satellite_array,
+    scalar_altitude_m_from_hmsl,
     SENSOR_ALLOWED_SAIDS,
     SENSOR_SAID_TO_SATELLITE,
     sum_two_rfi_combined_csvs_by_channel,
@@ -234,12 +237,37 @@ def load_amsua_nc4_and_build_arrays(nc4_path: str):
         if said is not None:
             said = np.resize(np.atleast_1d(said).ravel(), n_obs)
 
-    timestamps = timestamp_from_nc4_vars(year, month, days, hour, minu, seco)
-    altitude_m = float(np.nanmean(alt))
+    lat = replace_missing_with_nan(lat)
+    lon = replace_missing_with_nan(lon)
+    saza = replace_missing_with_nan(saza)
+    bearaz = replace_missing_with_nan(bearaz)
+    year = replace_missing_with_nan(year)
+    month = replace_missing_with_nan(month)
+    days = replace_missing_with_nan(days)
+    hour = replace_missing_with_nan(hour)
+    minu = replace_missing_with_nan(minu)
+    seco = replace_missing_with_nan(seco)
+    altitude_m = scalar_altitude_m_from_hmsl(alt)
     if said is not None:
-        satellite = said_to_satellite_array(said, SENSOR_NAME)
+        said_f = replace_missing_with_nan(np.asarray(said, dtype=np.float64))
+        said_int = np.where(np.isfinite(said_f), said_f, -1.0).astype(np.int64)
+        satellite = said_to_satellite_array(said_int, SENSOR_NAME)
     else:
         satellite = np.array([""] * n_obs, dtype=object)
+    timestamps = timestamp_from_nc4_vars(year, month, days, hour, minu, seco)
+    obs_valid = obs_valid_cross_track(
+        lat,
+        lon,
+        saza,
+        bearaz,
+        year,
+        month,
+        days,
+        hour,
+        minu,
+        seco,
+        satellite,
+    )
     return {
         "lat": lat,
         "lon": lon,
@@ -255,6 +283,7 @@ def load_amsua_nc4_and_build_arrays(nc4_path: str):
         "timestamps": timestamps,
         "satellite": satellite,
         "n_obs": n_obs,
+        "obs_valid": obs_valid,
     }
 
 
@@ -279,6 +308,11 @@ def run_rfi_for_channel_5g(
     satellite = data["satellite"]
     altitude_m = data["altitude_m"]
     n_obs = data["n_obs"]
+    obs_valid = data.get("obs_valid")
+    if obs_valid is None:
+        obs_valid = np.ones(n_obs, dtype=bool)
+    else:
+        obs_valid = np.asarray(obs_valid, dtype=bool).ravel()
     allowed = set(
         SENSOR_SAID_TO_SATELLITE[sensor_name][said]
         for said in SENSOR_ALLOWED_SAIDS[sensor_name]
@@ -290,14 +324,17 @@ def run_rfi_for_channel_5g(
     for ts, sat, idx, coords in iter_valid_ts_sat_indices(
         timestamps, satellite, allowed, ecef_by_satellite
     ):
+        idx_good = idx[obs_valid[idx]]
+        if idx_good.size == 0:
+            continue
         sat_ecef_km = np.array(coords, dtype=np.float64)
         rfi_db, rfi_tb = model_rfi_nwp_5g_single_time(
             sat_ecef_km,
-            lat[idx],
-            lon[idx],
-            saza[idx],
+            lat[idx_good],
+            lon[idx_good],
+            saza[idx_good],
             altitude_m,
-            density[idx],
+            density[idx_good],
             v_band_antenna,
             emitter_antenna,
             freq_hz=center_freq_hz,
@@ -309,8 +346,8 @@ def run_rfi_for_channel_5g(
             humidity=HUMIDITY_PCT,
             sensor_name=sensor_name,
         )
-        rfi_dBW[idx] = rfi_db
-        rfi_K[idx] = rfi_tb
+        rfi_dBW[idx_good] = rfi_db
+        rfi_K[idx_good] = rfi_tb
 
     df = pd.DataFrame({
         "timestamp": timestamps,
@@ -353,6 +390,11 @@ def run_rfi_for_channel_starlink_gateway(
     satellite = data["satellite"]
     altitude_m = data["altitude_m"]
     n_obs = data["n_obs"]
+    obs_valid = data.get("obs_valid")
+    if obs_valid is None:
+        obs_valid = np.ones(n_obs, dtype=bool)
+    else:
+        obs_valid = np.asarray(obs_valid, dtype=bool).ravel()
     allowed = set(
         SENSOR_SAID_TO_SATELLITE[sensor_name][said]
         for said in SENSOR_ALLOWED_SAIDS[sensor_name]
@@ -369,12 +411,15 @@ def run_rfi_for_channel_starlink_gateway(
     for ts, sat, idx, coords in iter_valid_ts_sat_indices(
         timestamps, satellite, allowed, ecef_by_satellite
     ):
+        idx_good = idx[obs_valid[idx]]
+        if idx_good.size == 0:
+            continue
         sat_ecef_km = np.array(coords, dtype=np.float64)
         rfi_db, rfi_tb = _model(
             sat_ecef_km,
-            lat[idx],
-            lon[idx],
-            saza[idx],
+            lat[idx_good],
+            lon[idx_good],
+            saza[idx_good],
             altitude_m,
             gateway_lat,
             gateway_lon,
@@ -394,8 +439,8 @@ def run_rfi_for_channel_starlink_gateway(
             chunk_size=chunk_size,
             gateway_bbox_margin_deg=gateway_bbox_margin_deg,
         )
-        rfi_dBW[idx] = rfi_db
-        rfi_K[idx] = rfi_tb
+        rfi_dBW[idx_good] = rfi_db
+        rfi_K[idx_good] = rfi_tb
 
     df = pd.DataFrame({
         "timestamp": timestamps,
@@ -812,6 +857,10 @@ def main():
                 rng_cr,
                 iclw_abs_threshold=CLOUD_RAIN_ICLW_ABS_THRESHOLD,
             )
+            bad_geo = ~np.isfinite(lat_cr) | ~np.isfinite(lon_cr)
+            if np.any(bad_geo):
+                atten_db_cr = np.array(atten_db_cr, copy=True)
+                atten_db_cr[bad_geo, :] = 0.0
             atten_by_ch = atten_db_to_by_channel_dict(ch_nums, atten_db_cr)
             del lat_cr, lon_cr, saza_cr, elevation_deg_cr, atten_db_cr
             del itu_nc_cr, center_freqs_ghz_cr, rng_cr, data_dir_cr

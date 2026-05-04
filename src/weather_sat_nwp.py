@@ -438,6 +438,7 @@ def get_emitter_density_vectorized(
     n = lat.size
     lat = lat.ravel()
     lon = lon.ravel()
+    finite_geo = np.isfinite(lat) & np.isfinite(lon)
 
     if not _GHSL_TIF_PATH_RESOLVED.is_file():
         raise FileNotFoundError(
@@ -452,6 +453,9 @@ def get_emitter_density_vectorized(
     try:
         raster, transform, height, width = _load_ghsl_raster()
         for i in range(n):
+            if not finite_geo[i]:
+                rows[i], cols[i] = -1, -1
+                continue
             r, c = rowcol(transform, float(lon[i]), float(lat[i]))
             rows[i], cols[i] = int(r), int(c)
         valid = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
@@ -463,6 +467,9 @@ def get_emitter_density_vectorized(
             height, width = dataset.height, dataset.width
             transform = dataset.transform
             for i in range(n):
+                if not finite_geo[i]:
+                    rows[i], cols[i] = -1, -1
+                    continue
                 r, c = rowcol(transform, float(lon[i]), float(lat[i]))
                 rows[i], cols[i] = int(r), int(c)
             valid = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
@@ -653,11 +660,11 @@ def timestamp_from_nc4_vars(
     Returns:
         np.ndarray of strings, shape (n,).
     """
-    y = np.atleast_1d(np.asarray(year).ravel())
-    mo = np.atleast_1d(np.asarray(month).ravel())
-    d = np.atleast_1d(np.asarray(day).ravel())
-    h = np.atleast_1d(np.asarray(hour).ravel())
-    mi = np.atleast_1d(np.asarray(minute).ravel())
+    y = np.atleast_1d(np.asarray(year, dtype=np.float64).ravel())
+    mo = np.atleast_1d(np.asarray(month, dtype=np.float64).ravel())
+    d = np.atleast_1d(np.asarray(day, dtype=np.float64).ravel())
+    h = np.atleast_1d(np.asarray(hour, dtype=np.float64).ravel())
+    mi = np.atleast_1d(np.asarray(minute, dtype=np.float64).ravel())
     sec = np.atleast_1d(np.asarray(second, dtype=np.float64).ravel())
     n = int(sec.size)
     y = np.resize(y, n)
@@ -669,6 +676,16 @@ def timestamp_from_nc4_vars(
     out = []
     for i in range(n):
         sec_i = float(sec.flat[i])
+        if not (
+            np.isfinite(y.flat[i])
+            and np.isfinite(mo.flat[i])
+            and np.isfinite(d.flat[i])
+            and np.isfinite(h.flat[i])
+            and np.isfinite(mi.flat[i])
+            and np.isfinite(sec_i)
+        ):
+            out.append("")
+            continue
         sec_int = int(sec_i)
         frac = sec_i - sec_int
         ms = min(999, int(round(frac * 1000)))
@@ -943,6 +960,228 @@ def model_rfi_nwp_5g_single_time_ssmis(
     return rfi_power_dBW, rfi_tb_K
 
 
+# -----------------------------------------------------------------------------
+# NC4 missing-value sentinel (product fill; colleague-confirmed). HMSL in meters.
+# Nominal missing is ~1e11; float32 rounding yields values slightly below 10e10, so
+# detection uses ``>= NC4_MISSING_FLOAT_MIN``, not exact equality to ``NC4_MISSING_FLOAT``.
+# -----------------------------------------------------------------------------
+NC4_MISSING_FLOAT = 10e10  # nominal 1e11 (attrs / documentation)
+NC4_MISSING_FLOAT_MIN = 1e10  # treat finite values >= this as the large missing sentinel band
+# Placeholder written to augmented ``TMBR`` when pre-existing Tb is invalid (not ``10e10``).
+NC4_MISSING_TMBR_OUT_RFI_NC4 = 1e10
+DEFAULT_LEO_ALTITUDE_M = 850_000.0
+
+
+def _large_missing_float_mask(values: np.ndarray) -> np.ndarray:
+    """True where ``values`` are finite and ``>= NC4_MISSING_FLOAT_MIN`` (near-1e11 fill)."""
+    v = np.asarray(values, dtype=np.float64)
+    return np.isfinite(v) & (v >= NC4_MISSING_FLOAT_MIN)
+
+
+def replace_missing_with_nan(
+    arr: np.ndarray,
+    fill: Optional[float] = None,
+) -> np.ndarray:
+    """
+    Return float64 copy with product missing floats replaced by NaN.
+
+    When ``fill`` is ``None`` or any value ``>= NC4_MISSING_FLOAT_MIN`` (including the
+    default ``NC4_MISSING_FLOAT``), all finite elements ``>= NC4_MISSING_FLOAT_MIN`` are
+    set to NaN (covers float32-rounded ``1e11``). For a smaller explicit ``fill``, uses
+    exact equality ``==`` only.
+    """
+    if fill is None:
+        fill = NC4_MISSING_FLOAT
+    a = np.asarray(arr, dtype=np.float64)
+    out = np.array(a, copy=True, dtype=np.float64)
+    fill_f = float(fill)
+    if fill_f >= NC4_MISSING_FLOAT_MIN:
+        out[_large_missing_float_mask(out)] = np.nan
+    else:
+        out[out == fill_f] = np.nan
+    return out
+
+
+def scalar_altitude_m_from_hmsl(
+    alt_1d: np.ndarray,
+    fill: Optional[float] = None,
+    default_m: Optional[float] = None,
+) -> float:
+    """
+    Mean HMSL (m) ignoring missing cells; ``default_m`` if no valid samples.
+
+    Missing cells use ``replace_missing_with_nan`` (``>= NC4_MISSING_FLOAT_MIN`` band or
+    exact small ``fill``), then nanmean.
+    """
+    if fill is None:
+        fill = NC4_MISSING_FLOAT
+    if default_m is None:
+        default_m = DEFAULT_LEO_ALTITUDE_M
+    a = replace_missing_with_nan(np.asarray(alt_1d, dtype=np.float64), fill=fill)
+    m = np.nanmean(a)
+    if np.isfinite(m):
+        return float(m)
+    return float(default_m)
+
+
+def _netcdf_float_missing_values_from_var(var) -> list[float]:
+    """
+    Collect finite float missing/fill values from a netCDF variable's attributes.
+
+    Includes ``_FillValue``, ``missing_value`` when present, and always
+    ``NC4_MISSING_FLOAT`` (deduplicated). Near-``1e11`` payloads are also detected via
+    ``NC4_MISSING_FLOAT_MIN`` in ``replace_missing_with_nan`` / ``_tmbr_preexisting_valid_mask``.
+    """
+    raw_list: list[float] = []
+    for name in ("_FillValue", "missing_value"):
+        if name not in var.ncattrs():
+            continue
+        raw = var.getncattr(name)
+        arr = np.atleast_1d(np.asarray(raw, dtype=np.float64)).ravel()
+        for x in arr:
+            xf = float(x)
+            if np.isfinite(xf):
+                raw_list.append(xf)
+    raw_list.append(float(NC4_MISSING_FLOAT))
+    uniq: list[float] = []
+    for xf in raw_list:
+        tol = 1.0 if max(abs(xf), 1.0) >= 1e6 else 1e-6
+        if any(abs(xf - u) <= tol for u in uniq):
+            continue
+        uniq.append(xf)
+    return uniq
+
+
+def _tmbr_preexisting_valid_mask(
+    base2: np.ndarray,
+    mask2: np.ndarray,
+    fill_values: Sequence[float],
+) -> np.ndarray:
+    """
+    Per-element validity for pre-existing brightness temperature (K).
+
+    False where not finite, masked, finite values ``>= NC4_MISSING_FLOAT_MIN`` (near-``1e11``
+    missing, including float32-rounded), or equal (within tolerance) to any other
+    ``fill_values`` entry (e.g. small ``_FillValue`` / ``missing_value``).
+    """
+    bad_fill = np.zeros(base2.shape, dtype=bool)
+    bad_fill |= _large_missing_float_mask(base2)
+    for fv in fill_values:
+        fv = float(fv)
+        if not np.isfinite(fv):
+            continue
+        if fv >= NC4_MISSING_FLOAT_MIN:
+            continue
+        if abs(fv) >= 1e6:
+            bad_fill |= np.isclose(base2, fv, rtol=0.0, atol=1.0, equal_nan=False)
+        else:
+            bad_fill |= np.isclose(base2, fv, rtol=0.0, atol=1e-4, equal_nan=False)
+    m2 = np.asarray(mask2, dtype=bool)
+    return np.isfinite(base2) & ~m2 & ~bad_fill
+
+
+def _time_components_plausible_mask(
+    year: np.ndarray,
+    month: np.ndarray,
+    day: np.ndarray,
+    hour: np.ndarray,
+    minute: np.ndarray,
+    second: np.ndarray,
+) -> np.ndarray:
+    """Finite time fields with loose calendar bounds (nc4 integer-like components)."""
+    y = np.asarray(year, dtype=np.float64)
+    mo = np.asarray(month, dtype=np.float64)
+    d = np.asarray(day, dtype=np.float64)
+    h = np.asarray(hour, dtype=np.float64)
+    mi = np.asarray(minute, dtype=np.float64)
+    s = np.asarray(second, dtype=np.float64)
+    return (
+        np.isfinite(y)
+        & np.isfinite(mo)
+        & np.isfinite(d)
+        & np.isfinite(h)
+        & np.isfinite(mi)
+        & np.isfinite(s)
+        & (y >= 1980.0)
+        & (y <= 2060.0)
+        & (mo >= 1.0)
+        & (mo <= 12.0)
+        & (d >= 1.0)
+        & (d <= 31.0)
+        & (h >= 0.0)
+        & (h <= 23.0)
+        & (mi >= 0.0)
+        & (mi <= 59.0)
+        & (s >= 0.0)
+        & (s < 61.0)
+    )
+
+
+def _satellite_name_nonempty_mask(satellite: np.ndarray) -> np.ndarray:
+    """True where mapped satellite name is non-empty (RFI / ECEF grouping applies)."""
+    s = np.asarray(satellite, dtype=str)
+    s = np.char.strip(s)
+    return np.char.str_len(s) > 0
+
+
+def obs_valid_cross_track(
+    lat: np.ndarray,
+    lon: np.ndarray,
+    saza_deg: np.ndarray,
+    bearaz_deg: np.ndarray,
+    year: np.ndarray,
+    month: np.ndarray,
+    day: np.ndarray,
+    hour: np.ndarray,
+    minute: np.ndarray,
+    second: np.ndarray,
+    satellite: np.ndarray,
+) -> np.ndarray:
+    """
+    Per-row validity for cross-track RFI (ATMS, AMSU-A): geo + angles + time + satellite name.
+    """
+    lat = np.asarray(lat, dtype=np.float64)
+    lon = np.asarray(lon, dtype=np.float64)
+    saza_deg = np.asarray(saza_deg, dtype=np.float64)
+    bearaz_deg = np.asarray(bearaz_deg, dtype=np.float64)
+    geo = (
+        np.isfinite(lat)
+        & np.isfinite(lon)
+        & np.isfinite(saza_deg)
+        & np.isfinite(bearaz_deg)
+        & (np.abs(lat) <= 90.0)
+        & (np.abs(lon) <= 180.0)
+    )
+    tm = _time_components_plausible_mask(year, month, day, hour, minute, second)
+    sat_ok = _satellite_name_nonempty_mask(satellite)
+    return geo & tm & sat_ok
+
+
+def obs_valid_ssmis_conical(
+    lat: np.ndarray,
+    lon: np.ndarray,
+    year: np.ndarray,
+    month: np.ndarray,
+    day: np.ndarray,
+    hour: np.ndarray,
+    minute: np.ndarray,
+    second: np.ndarray,
+    satellite: np.ndarray,
+) -> np.ndarray:
+    """Per-row validity for SSMI-S RFI: lat/lon + time + satellite name (no HMSL in nc4)."""
+    lat = np.asarray(lat, dtype=np.float64)
+    lon = np.asarray(lon, dtype=np.float64)
+    geo = (
+        np.isfinite(lat)
+        & np.isfinite(lon)
+        & (np.abs(lat) <= 90.0)
+        & (np.abs(lon) <= 180.0)
+    )
+    tm = _time_components_plausible_mask(year, month, day, hour, minute, second)
+    sat_ok = _satellite_name_nonempty_mask(satellite)
+    return geo & tm & sat_ok
+
+
 # SAID (Satellite ID) in nc4: map to satellite name per sensor. Used by RFI scripts to select ECEF per observation.
 SENSOR_SAID_TO_SATELLITE = {
     "ATMS": {224: "SUOMI-NPP", 225: "JPSS-1"},
@@ -1200,6 +1439,7 @@ def _rfi_tb_table_from_combined_csv(
     accumulate: bool,
     target: Optional[np.ndarray],
     cloud_rain_atten_db_by_channel: Optional[Dict[int, np.ndarray]] = None,
+    tmbr_valid2: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     Build or update (n_obs, n_tmbr_channels) RFI brightness temperature (K) from a combined CSV.
@@ -1210,6 +1450,9 @@ def _rfi_tb_table_from_combined_csv(
     If ``cloud_rain_atten_db_by_channel`` is set, keys are instrument channel numbers and values
     are (n_obs,) attenuation in dB; summed RFI added to the layer is multiplied by
     ``10**(-atten_dB/10)`` element-wise (non-finite attenuation treated as 0 dB).
+
+    If ``tmbr_valid2`` is set (shape ``(n_obs, n_tmbr_channels)``), summed RFI is added only
+    where that mask is True for the channel; if ``None``, use ``~mask2`` only (legacy).
     """
     if target is None:
         layer = np.zeros((n_obs, n_tmbr_channels), dtype=np.float64)
@@ -1232,7 +1475,10 @@ def _rfi_tb_table_from_combined_csv(
                 -np.where(np.isfinite(att), att, 0.0) / 10.0,
             )
             rfi = rfi * fac
-        ok = ~mask2[:, idx]
+        if tmbr_valid2 is not None:
+            ok = tmbr_valid2[:, idx]
+        else:
+            ok = ~mask2[:, idx]
         if accumulate:
             layer[ok, idx] = layer[ok, idx] + rfi[ok]
         else:
@@ -1246,11 +1492,12 @@ def _rfi_tb_compact_from_combined_csv(
     tmbr_channel_numbers_with_rfi: Sequence[int],
     n_obs: int,
     n_tmbr_channels: int,
+    tmbr_valid2: Optional[np.ndarray] = None,
 ) -> tuple[np.ndarray, list[int]]:
     """
     RFI Tb (K) only for modeled channels: shape ``(n_obs, n_rfi)``, column order = sorted
-    instrument channel numbers. Uses the same mask as ``TMBR`` (no write where that TMBR
-    channel element is masked).
+    instrument channel numbers. Uses ``tmbr_valid2`` when given, else ``~mask2`` (no write
+    where that TMBR channel element is masked / invalid).
     """
     ch_sorted = sorted(int(c) for c in tmbr_channel_numbers_with_rfi)
     n_rfi = len(ch_sorted)
@@ -1265,7 +1512,10 @@ def _rfi_tb_compact_from_combined_csv(
         rfi = pd.to_numeric(df[col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64)
         if rfi.shape[0] != n_obs:
             raise ValueError(f"Column {col} length {rfi.shape[0]} != {n_obs}.")
-        ok = ~mask2[:, idx_tmbr]
+        if tmbr_valid2 is not None:
+            ok = tmbr_valid2[:, idx_tmbr]
+        else:
+            ok = ~mask2[:, idx_tmbr]
         layer[ok, j] = rfi[ok]
     return layer, ch_sorted
 
@@ -1363,7 +1613,13 @@ def copy_nc4_with_tmbr_plus_rfi(
     ``channelN_rfi_brightness_temperature_K`` (if present) is added to ``TMBR`` index ``N - 1``
     along the channel dimension (1-based channel numbering as in ATMS/AMSU-A/SSMI-S docs).
 
-    Where ``TMBR`` is masked, that element is left unchanged.
+    Where pre-existing ``TMBR`` is invalid (masked, non-finite, ``>= NC4_MISSING_FLOAT_MIN``
+    large-sentinel band, or other ``_FillValue`` / ``missing_value`` matches), no RFI is added
+    on that channel and the output ``TMBR`` for that cell is set to ``NC4_MISSING_TMBR_OUT_RFI_NC4``
+    (``1e10``, colleague convention for augmented files). ``CELL_RFI`` / ``GATE_RFI`` still record pre-attenuation
+    RFI Tb (K) from the combined CSVs on those cells (diagnostic); only elements where the
+    netCDF **mask** applies on ``TMBR`` for that channel are left unchanged (zeros in the
+    compact layer). Other channels are unchanged by this rule.
 
     Sets ``TMBR`` attribute ``long_name`` to
     ``BRIGHTNESS TEMPERATURE with 5G and Starlink gateway``.
@@ -1507,6 +1763,9 @@ def copy_nc4_with_tmbr_plus_rfi(
         base2 = np.transpose(base, order).reshape(n_obs, n_tmbr_channels)
         mask2 = np.transpose(mask, order).reshape(n_obs, n_tmbr_channels)
 
+        fill_vals = _netcdf_float_missing_values_from_var(v)
+        tmbr_valid2 = _tmbr_preexisting_valid_mask(base2, mask2, fill_vals)
+
         _rfi_tb_table_from_combined_csv(
             df,
             mask2,
@@ -1516,7 +1775,15 @@ def copy_nc4_with_tmbr_plus_rfi(
             accumulate=True,
             target=base2,
             cloud_rain_atten_db_by_channel=cloud_rain_atten_db_by_channel,
+            tmbr_valid2=tmbr_valid2,
         )
+
+        for ch in tmbr_channel_numbers_with_rfi:
+            idx = int(ch) - 1
+            if idx < 0 or idx >= n_tmbr_channels:
+                continue
+            bad = ~tmbr_valid2[:, idx]
+            base2[bad, idx] = float(NC4_MISSING_TMBR_OUT_RFI_NC4)
 
         out_perm = base2.reshape([shape[i] for i in order])
         inv_order = np.argsort(order)
@@ -1550,12 +1817,14 @@ def copy_nc4_with_tmbr_plus_rfi(
                     "combined CSVs to write CELL_RFI and GATE_RFI; skipping those variables."
                 )
         else:
+            # Diagnostic layers: follow CSV Tb even when native TMBR is invalid; only ma mask.
             cell2, ch_order = _rfi_tb_compact_from_combined_csv(
                 df_5g,
                 mask2,
                 tmbr_channel_numbers_with_rfi,
                 n_obs,
                 n_tmbr_channels,
+                tmbr_valid2=None,
             )
             gate2, _ = _rfi_tb_compact_from_combined_csv(
                 df_sl,
@@ -1563,6 +1832,7 @@ def copy_nc4_with_tmbr_plus_rfi(
                 tmbr_channel_numbers_with_rfi,
                 n_obs,
                 n_tmbr_channels,
+                tmbr_valid2=None,
             )
             n_rfi_ch = cell2.shape[1]
             spatial_sizes = [shape[order[i]] for i in range(len(order) - 1)]
