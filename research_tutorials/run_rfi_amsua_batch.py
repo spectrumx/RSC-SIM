@@ -7,6 +7,15 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 
+def input_nc4_paths(sensor_dir: Path) -> list[Path]:
+    """
+    Input ``.nc4`` files only; skip RFI outputs already in the folder (``*_RFI.nc4``).
+    """
+    return sorted(
+        p for p in sensor_dir.glob("*.nc4") if not p.stem.endswith("_RFI")
+    )
+
+
 def run_rfi_script(nc4_path, sensor_name, script_path, out_dir, max_retries=2):
     """
     Worker: run AMSU-A_RFI_modeling.py for one nc4 (5G harmonic + Starlink gateway; default gateways CSV).
@@ -35,8 +44,9 @@ def run_rfi_script(nc4_path, sensor_name, script_path, out_dir, max_retries=2):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Parallel batch: run AMSU-A_RFI_modeling.py on every .nc4 in a sensor directory "
-            "(5G + Starlink gateway RFI; e.g. util/AMSU-A). Optional script flags are not passed."
+            "Parallel batch: run AMSU-A_RFI_modeling.py on every input .nc4 in a sensor directory "
+            "(5G + Starlink gateway RFI; e.g. util/AMSU-A). Skips ``*_RFI.nc4`` outputs from prior runs. "
+            "Optional script flags are not passed."
         )
     )
     parser.add_argument("sensor_dir", help="Sensor directory containing .nc4 and ECEF lookups (e.g. util/AMSU-A)")
@@ -61,7 +71,7 @@ def main():
         print(f"Error: Script not found: {script_path}")
         return
 
-    nc4_files = list(sensor_dir.glob("*.nc4"))
+    nc4_files = input_nc4_paths(sensor_dir)
     total_files = len(nc4_files)
 
     if args.workers is not None:

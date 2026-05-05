@@ -7,10 +7,16 @@ if "%~1"=="" (
 )
 set "SENSOR_DIR=%~1"
 set "SCRIPT=AMSU-A_RFI_modeling.py"
-echo Running AMSU-A RFI (5G + Starlink gateway) for all .nc4 in %SENSOR_DIR%
+echo Running AMSU-A RFI (5G + Starlink gateway) for all input .nc4 in %SENSOR_DIR% (skips *_RFI.nc4)
 for %%F in ("%SENSOR_DIR%\*.nc4") do (
-  set "nc4=%%F"
-  echo --- %%~nxF
-  python "%SCRIPT%" --sensor AMSU-A --nc4 "!nc4!" --out_dir "%SENSOR_DIR%"
+  set "nx=%%~nxF"
+  set "tail=!nx:~-8!"
+  if /i "!tail!"=="_RFI.nc4" (
+    echo --- Skipping RFI output: !nx!
+  ) else (
+    set "nc4=%%F"
+    echo --- %%~nxF
+    python "%SCRIPT%" --sensor AMSU-A --nc4 "!nc4!" --out_dir "%SENSOR_DIR%"
+  )
 )
 echo Done.
