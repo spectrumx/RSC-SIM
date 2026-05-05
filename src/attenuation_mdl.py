@@ -1126,7 +1126,7 @@ def compute_cloud_rain_atten_db_for_fovs(
     Vectorized cloud/rain slant attenuation (dB) per FOV per channel.
 
     ``center_freqs_ghz`` column ``j`` corresponds to the same channel order used when
-    building the dict for ``weather_sat_nwp.copy_nc4_with_tmbr_plus_rfi``.
+    building the dict for ``weather_sat_nwp.copy_nc4_with_tmbr_plus_rfi`` (``TMBR_RFI`` merge).
 
     Raises ``FileNotFoundError`` if ``itu_nc_path`` is not a regular file.
 

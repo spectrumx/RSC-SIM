@@ -12,14 +12,14 @@ per-source per-channel CSVs and combined CSVs, unified top-5 text
 (``*_5G_Starlink_Gateway_RFI_combined.csv``).
 
 Full ITU-R P.676 atmospheric absorption; no polarization loss, terrain masking, or
-OOBE for 5G. Cloud/rain slant attenuation scales summed RFI into ``TMBR`` and is in ``CLOUD_RAIN_ATT`` (dB).
+OOBE for 5G. Cloud/rain slant attenuation scales summed RFI into ``TMBR_RFI`` and is in ``CLOUD_RAIN_ATT`` (dB).
 
 Usage:
   python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 path [--out_dir dir] [--gateways_csv path]
 
   python AMSU-A_RFI_modeling.py --sensor AMSU-A --nc4 util/AMSU-A/amsua.2023080112.nc4 --out_dir util/AMSU-A
 
-Also writes ``<stem>_RFI.nc4``: ``TMBR`` (updated long_name) + summed RFI Tb on ch 3–8 after cloud/rain factor;
+Also writes ``<stem>_RFI.nc4``: native ``TMBR`` unchanged; ``TMBR_RFI`` = ``TMBR`` + summed RFI Tb on ch 3–8 after cloud/rain factor;
 ``CELL_RFI`` / ``GATE_RFI`` hold 5G-only and gateway-only Tb (K) on a compact channel axis (ch 3–8 only);
 ``CLOUD_RAIN_ATT`` (dB) on the same axis; channel dim ``nchans_rfi`` (Panoply defaults like ``nchans``);
 coordinate ``channel_index_rfi`` gives instrument channel per index. Top-5 attenuated Tb:
@@ -894,8 +894,8 @@ def main():
                 combined_rfi_df_starlink=df_sl_cr,
             )
             print(
-                f"Wrote RFI-augmented netCDF (TMBR with cloud/rain-scaled summed RFI, CELL_RFI, GATE_RFI, "
-                f"CLOUD_RAIN_ATT on ch 3–8) to {rfi_nc4}."
+                f"Wrote RFI-augmented netCDF (native TMBR unchanged; TMBR_RFI with cloud/rain-scaled summed RFI, "
+                f"CELL_RFI, GATE_RFI, CLOUD_RAIN_ATT on ch 3–8) to {rfi_nc4}."
             )
         except FileNotFoundError:
             raise

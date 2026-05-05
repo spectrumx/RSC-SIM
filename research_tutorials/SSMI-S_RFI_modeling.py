@@ -16,14 +16,14 @@ ellipse orientation uses ``calculate_ssmis_fov_bearing_vectorized`` when the FOV
 run is a multiple of 60, else North-aligned (see ``_ssmis_ellipse_azimuth_deg``).
 
 Full ITU-R P.676 atmospheric absorption; no polarization loss, terrain masking, or OOBE
-for 5G. Cloud/rain slant attenuation scales summed RFI into ``TMBR`` and is in ``CLOUD_RAIN_ATT`` (dB).
+for 5G. Cloud/rain slant attenuation scales summed RFI into ``TMBR_RFI`` and is in ``CLOUD_RAIN_ATT`` (dB).
 
 Usage:
   python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 path [--out_dir dir] [--gateways_csv path]
 
   python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 util/SSMI-S/ssmis.2023080112.nc4 --out_dir util/SSMI-S
 
-Also writes ``<stem>_RFI.nc4``: ``TMBR`` (updated long_name) + summed RFI Tb on ch 1–5 after cloud/rain factor;
+Also writes ``<stem>_RFI.nc4``: native ``TMBR`` unchanged; ``TMBR_RFI`` = ``TMBR`` + summed RFI Tb on ch 1–5 after cloud/rain factor;
 ``CELL_RFI`` / ``GATE_RFI`` hold 5G-only and gateway-only Tb (K) on a compact channel axis (ch 1–5 only);
 ``CLOUD_RAIN_ATT`` (dB) on the same axis; channel dim ``nchans_rfi`` (Panoply defaults like ``nchans``);
 coordinate ``channel_index_rfi`` gives instrument channel per index. Top-5 attenuated Tb:
@@ -904,8 +904,8 @@ def main():
                 combined_rfi_df_starlink=df_sl_cr,
             )
             print(
-                f"Wrote RFI-augmented netCDF (TMBR with cloud/rain-scaled summed RFI, CELL_RFI, GATE_RFI, "
-                f"CLOUD_RAIN_ATT on ch 1–5) to {rfi_nc4}."
+                f"Wrote RFI-augmented netCDF (native TMBR unchanged; TMBR_RFI with cloud/rain-scaled summed RFI, "
+                f"CELL_RFI, GATE_RFI, CLOUD_RAIN_ATT on ch 1–5) to {rfi_nc4}."
             )
         except FileNotFoundError:
             raise

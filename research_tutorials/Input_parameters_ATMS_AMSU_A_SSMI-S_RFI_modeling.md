@@ -1,6 +1,6 @@
 # RFI Modeling Input Parameters: Reference for Expert Tuning
 
-Reference for tuning **5G** and **Starlink ground gateway** RFI (dBW, brightness temperature K (Tb)), and for understanding **cloud/rain slant attenuation** applied to the **sum** of those Tb values before they are added to `TMBR` in `{stem}_RFI.nc4`.
+Reference for tuning **5G** and **Starlink ground gateway** RFI (dBW, brightness temperature K (Tb)), and for understanding **cloud/rain slant attenuation** applied to the **sum** of those Tb values before they are added to **`TMBR_RFI`** in **`{stem}_RFI.nc4`** (native **`TMBR`** is unchanged).
 
 The three RFI modeling scripts are:
 
@@ -10,7 +10,7 @@ The three RFI modeling scripts are:
 
 Shared 5G / density logic: `src/weather_sat_nwp.py`, `src/weather_sat_mdl.py`. Gateway geometry and antennas: `src/starlink_gateway_mdl.py`. Cloud/rain grids and attenuation: `src/attenuation_mdl.py` (P.840 / P.838); nc4 merge: `copy_nc4_with_tmbr_plus_rfi` in `weather_sat_nwp.py`.
 
-**NC4 missing fill:** Product missing values are near **`1e11`** (nominal **`10e10`**, often slightly lower after float32 storage) for most float fields. Code treats any finite float **`>= NC4_MISSING_FLOAT_MIN` (`1e10`)** as that large sentinel (not exact equality to **`10e10`**). **HMSL** (ATMS/AMSU-A) uses **`NC4_MISSING_HMSL_VALUE` (`-9999`)** only, via **`scalar_altitude_m_from_hmsl`**, not the **`~1e11`** band. `weather_sat_nwp` exposes `NC4_MISSING_FLOAT`, `NC4_MISSING_FLOAT_MIN`, `NC4_MISSING_HMSL_VALUE`, `replace_missing_with_nan`, `scalar_altitude_m_from_hmsl` (mean HMSL or `DEFAULT_LEO_ALTITUDE_M`), and `obs_valid_cross_track` / `obs_valid_ssmis_conical` so RFI rows stay aligned while invalid observations get zero RFI and zero cloud/rain attenuation where lat/lon are not finite. In **`{stem}_RFI.nc4`**, `copy_nc4_with_tmbr_plus_rfi` treats pre-existing **`TMBR`** as missing if masked, non-finite, **`>= 1e10`** in the large-sentinel band, or matching smaller variable **`_FillValue`** / **`missing_value`** entries; on those cells for modeled channels only, output **`TMBR` is `1e10`** (`NC4_MISSING_TMBR_OUT_RFI_NC4`; no RFI increment; distinct from product fill **`10e10`** / **`NC4_MISSING_FLOAT`**). **`CELL_RFI` / `GATE_RFI`** still record pre-attenuation RFI Tb from the combined CSVs there (diagnostic), except where the netCDF **mask** on `TMBR` applies.
+**NC4 missing fill:** Product missing values are near **`1e11`** (nominal **`10e10`**, often slightly lower after float32 storage) for most float fields. Code treats any finite float **`>= NC4_MISSING_FLOAT_MIN` (`1e10`)** as that large sentinel (not exact equality to **`10e10`**). **HMSL** (ATMS/AMSU-A) uses **`NC4_MISSING_HMSL_VALUE` (`-9999`)** only, via **`scalar_altitude_m_from_hmsl`**, not the **`~1e11`** band. `weather_sat_nwp` exposes `NC4_MISSING_FLOAT`, `NC4_MISSING_FLOAT_MIN`, `NC4_MISSING_HMSL_VALUE`, `replace_missing_with_nan`, `scalar_altitude_m_from_hmsl` (mean HMSL or `DEFAULT_LEO_ALTITUDE_M`), and `obs_valid_cross_track` / `obs_valid_ssmis_conical` so RFI rows stay aligned while invalid observations get zero RFI and zero cloud/rain attenuation where lat/lon are not finite. In **`{stem}_RFI.nc4`**, **`TMBR`** stays identical to the input file; **`TMBR_RFI`** holds native **`TMBR`** plus cloud/rain-scaled summed RFI on modeled channels. **`copy_nc4_with_tmbr_plus_rfi`** treats pre-existing **`TMBR`** as missing (for deciding the increment) if masked, non-finite, **`>= 1e10`** in the large-sentinel band, or matching smaller **`_FillValue`** / **`missing_value`** entries; on those cells for modeled channels only, **`TMBR_RFI`** is set to **`1e10`** (`NC4_MISSING_TMBR_OUT_RFI_NC4`; no RFI increment; distinct from product fill **`10e10`** / **`NC4_MISSING_FLOAT`**). **`CELL_RFI` / `GATE_RFI`** still record pre-attenuation RFI Tb from the combined CSVs there (diagnostic), except where the netCDF **mask** on **`TMBR`** applies.
 
 ---
 
@@ -145,13 +145,13 @@ Direct in-band RFI from fixed gateway sites. Gateway list: CLI **`--gateways_csv
 | `GATEWAY_GAIN_MAX`, `GATEWAY_HORIZ_BW`, `GATEWAY_VERT_BW`, `GATEWAY_ETA_RAD` | Each sensor script | dBi, deg, deg, — | Gateway sector pattern (same family as 5G sector builder). |
 | `GATEWAY_BORESIGHT_POINTING` | Each sensor script | bool | Boresight / random-boresight behavior (see script + `starlink_gateway_mdl`). |
 
-**Note:** Changing EIRP, N antenna of gateway, or pattern strongly changes `GATE_RFI` and the summed Tb. `CELL_RFI` / `GATE_RFI` in nc4 are **pre–cloud/rain** Tb; only the increment added to `TMBR` uses the attenuation factor.
+**Note:** Changing EIRP, N antenna of gateway, or pattern strongly changes `GATE_RFI` and the summed Tb. `CELL_RFI` / `GATE_RFI` in nc4 are **pre–cloud/rain** Tb; only the increment added to **`TMBR_RFI`** uses the attenuation factor.
 
 ---
 
-## 9. Cloud and rain path attenuation (moderate impact on effective Tb in `TMBR`)
+## 9. Cloud and rain path attenuation (moderate impact on effective Tb in `TMBR_RFI`)
 
-After 5G + gateway Tb are summed per channel, slant attenuation **A** (dB, ≥ 0) is computed from ITU monthly NetCDF **`itu_iclw_rain_info_MM.nc`** in `research_tutorials/data/` (month from filename stem). Increment added to `TMBR` is **(5G Tb + gateway Tb) × 10^(-A/10)**. Variable **`CLOUD_RAIN_ATT`** stores **A** on the same compact channel axis as `CELL_RFI` / `GATE_RFI`.
+After 5G + gateway Tb are summed per channel, slant attenuation **A** (dB, ≥ 0) is computed from ITU monthly NetCDF **`itu_iclw_rain_info_MM.nc`** in `research_tutorials/data/` (month from filename stem). Increment added to **`TMBR_RFI`** (on top of native **`TMBR`**) is **(5G Tb + gateway Tb) × 10^(-A/10)**. Variable **`CLOUD_RAIN_ATT`** stores **A** on the same compact channel axis as `CELL_RFI` / `GATE_RFI`.
 
 | Item | Location | Description |
 |------|----------|-------------|
@@ -189,7 +189,7 @@ Passed as `slant_range_km` and `elevation_deg` into `model_rfi_nwp_5g_single_tim
 7. **Channel bandwidth**: scales brightness temperature Tb = P / (k_B * B); does not change RFI power in dBW.
 8. **Atmospheric parameters** (`TEMPERATURE_K`, `PRESSURE_PA`, `HUMIDITY_PCT`): P.676 path loss (5G and gateway chains).
 9. **Starlink gateway** (`EIRP_PER_GATEWAY_DBW`, `N_ANTENNAS_PER_GATEWAY`, `gateway_center_freq_hz_list`, gateway antenna constants): sets gateway Tb and summed RFI.
-10. **Cloud/rain attenuation** (monthly `itu_iclw_rain_info_MM.nc`, `CLOUD_RAIN_ICLW_ABS_THRESHOLD`): scales the **summed** Tb increment into `TMBR`; does not rescale `CELL_RFI` / `GATE_RFI`.
+10. **Cloud/rain attenuation** (monthly `itu_iclw_rain_info_MM.nc`, `CLOUD_RAIN_ICLW_ABS_THRESHOLD`): scales the **summed** Tb increment into **`TMBR_RFI`**; does not rescale `CELL_RFI` / `GATE_RFI`.
 11. **SSMI-S geometry** (`SSMIS_SLANT_RANGE_KM`, `SSMIS_ELEVATION_DEG`): path length and elevation for SSMI-S only.
 
 ---

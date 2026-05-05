@@ -970,7 +970,7 @@ def model_rfi_nwp_5g_single_time_ssmis(
 NC4_MISSING_FLOAT = 10e10  # nominal 1e11 (attrs / documentation)
 NC4_MISSING_FLOAT_MIN = 1e10  # treat finite values >= this as the large missing sentinel band
 NC4_MISSING_HMSL_VALUE = -9999.0  # HMSL missing in nc4 (not ~1e11)
-# Placeholder written to augmented ``TMBR`` when pre-existing Tb is invalid (not ``10e10``).
+# Placeholder written to ``TMBR_RFI`` when pre-existing Tb is invalid on a modeled channel.
 NC4_MISSING_TMBR_OUT_RFI_NC4 = 1e10
 DEFAULT_LEO_ALTITUDE_M = 850_000.0
 
@@ -1597,6 +1597,7 @@ def copy_nc4_with_tmbr_plus_rfi(
     tmbr_channel_numbers_with_rfi: Sequence[int],
     n_tmbr_channels: int,
     tmbr_var_name: str = "TMBR",
+    tmbr_rfi_var_name: str = "TMBR_RFI",
     combined_rfi_csv_5g: Optional[Union[str, Path]] = None,
     combined_rfi_csv_starlink: Optional[Union[str, Path]] = None,
     cloud_rain_atten_db_by_channel: Optional[Dict[int, np.ndarray]] = None,
@@ -1605,28 +1606,29 @@ def copy_nc4_with_tmbr_plus_rfi(
     combined_rfi_df_starlink: Optional[pd.DataFrame] = None,
 ) -> Path:
     """
-    Copy a netCDF-4 file and add summed RFI brightness temperature (K) into ``TMBR``.
+    Copy a netCDF-4 file and add a new variable ``TMBR_RFI`` with native ``TMBR`` plus RFI.
 
-    The destination file is a byte copy of the source, then ``TMBR`` is updated in place.
+    The destination file is a byte copy of the source. The original ``TMBR`` variable is
+    **not** modified. A new variable ``TMBR_RFI`` (default name; override with
+    ``tmbr_rfi_var_name``) holds the same dimensions as ``TMBR`` with summed 5G+gateway RFI Tb
+    (after cloud/rain attenuation factor) added on modeled channels.
+
     Rows in ``combined_rfi_csv`` must match the number of observations implied by ``TMBR``
     (product of all dimensions except the one equal to ``n_tmbr_channels``), in the same
     order as the RFI modeling scripts (C-order ravel of leading dimensions when the channel
     axis is last after transpose).
 
     For each instrument channel number ``N`` in ``tmbr_channel_numbers_with_rfi``, the column
-    ``channelN_rfi_brightness_temperature_K`` (if present) is added to ``TMBR`` index ``N - 1``
-    along the channel dimension (1-based channel numbering as in ATMS/AMSU-A/SSMI-S docs).
+    ``channelN_rfi_brightness_temperature_K`` (if present) is added to the ``TMBR_RFI`` layer
+    at index ``N - 1`` (1-based channel numbering as in ATMS/AMSU-A/SSMI-S docs).
 
     Where pre-existing ``TMBR`` is invalid (masked, non-finite, ``>= NC4_MISSING_FLOAT_MIN``
     large-sentinel band, or other ``_FillValue`` / ``missing_value`` matches), no RFI is added
-    on that channel and the output ``TMBR`` for that cell is set to ``NC4_MISSING_TMBR_OUT_RFI_NC4``
-    (``1e10``, colleague convention for augmented files). ``CELL_RFI`` / ``GATE_RFI`` still record pre-attenuation
+    on that channel and ``TMBR_RFI`` for that cell is set to ``NC4_MISSING_TMBR_OUT_RFI_NC4``
+    (``1e10``, colleague convention). ``CELL_RFI`` / ``GATE_RFI`` still record pre-attenuation
     RFI Tb (K) from the combined CSVs on those cells (diagnostic); only elements where the
     netCDF **mask** applies on ``TMBR`` for that channel are left unchanged (zeros in the
-    compact layer). Other channels are unchanged by this rule.
-
-    Sets ``TMBR`` attribute ``long_name`` to
-    ``BRIGHTNESS TEMPERATURE with 5G and Starlink gateway``.
+    compact layer). Other channels in ``TMBR_RFI`` match native ``TMBR``.
 
     If both ``combined_rfi_csv_5g`` and ``combined_rfi_csv_starlink`` are provided and exist,
     creates variables ``CELL_RFI`` (5G-only Tb RFI) and ``GATE_RFI`` (Starlink gateway-only
@@ -1641,7 +1643,7 @@ def copy_nc4_with_tmbr_plus_rfi(
 
     If ``cloud_rain_atten_db_by_channel`` is provided (instrument channel -> (n_obs,) dB),
     writes ``CLOUD_RAIN_ATT`` (dB) on the same reduced channel grid as ``CELL_RFI`` /
-    ``GATE_RFI``, and scales the **summed** RFI added into ``TMBR`` by ``10**(-dB/10)`` per
+    ``GATE_RFI``, and scales the **summed** RFI added into ``TMBR_RFI`` by ``10**(-dB/10)`` per
     FOV and channel. ``CELL_RFI`` / ``GATE_RFI`` are left as pre-attenuation Tb (K).
 
     Args:
@@ -1650,7 +1652,8 @@ def copy_nc4_with_tmbr_plus_rfi(
         combined_rfi_csv: Combined CSV with summed 5G+Starlink RFI Tb columns.
         tmbr_channel_numbers_with_rfi: Instrument channels to update (e.g. 3–9 for ATMS).
         n_tmbr_channels: Full channel count on the TMBR channel axis (22 / 15 / 24).
-        tmbr_var_name: Variable name (default ``TMBR``); matched case-insensitively if missing.
+        tmbr_var_name: Native brightness variable (default ``TMBR``); matched case-insensitively.
+        tmbr_rfi_var_name: Output variable for combined Tb (default ``TMBR_RFI``).
         combined_rfi_csv_5g: Optional path to 5G-only combined RFI CSV for ``CELL_RFI``.
         combined_rfi_csv_starlink: Optional path to Starlink-only combined RFI CSV for ``GATE_RFI``.
         cloud_rain_atten_db_by_channel: Optional map channel -> slant attenuation (dB) per FOV.
@@ -1795,15 +1798,30 @@ def copy_nc4_with_tmbr_plus_rfi(
 
         tmbr_dtype = np.dtype(v.dtype)
         if tmbr_dtype == np.dtype(np.float64):
-            v[...] = out
+            out_to_store = out
         else:
-            v[...] = out.astype(tmbr_dtype, copy=False)
+            out_to_store = out.astype(tmbr_dtype, copy=False)
 
+        rfi_name = str(tmbr_rfi_var_name).strip() or "TMBR_RFI"
+        if rfi_name in ds.variables:
+            rfi_v = ds.variables[rfi_name]
+            if tuple(rfi_v.dimensions) != tuple(v.dimensions):
+                raise ValueError(
+                    f"{rfi_name!r} dimensions {rfi_v.dimensions} != {vname!r} {v.dimensions}"
+                )
+        else:
+            rfi_v = ds.createVariable(rfi_name, tmbr_dtype, v.dimensions)
+        rfi_v[:] = out_to_store
         try:
-            v.setncattr(
+            rfi_v.setncattr(
                 "long_name",
-                "BRIGHTNESS TEMPERATURE with 5G and Starlink gateway",
+                "BRIGHTNESS TEMPERATURE with 5G and Starlink gateway "
+                "(native TMBR plus cloud-rain-scaled summed RFI on modeled channels)",
             )
+            if "units" in v.ncattrs():
+                rfi_v.setncattr("units", v.getncattr("units"))
+            else:
+                rfi_v.setncattr("units", "Kelvin")
         except (AttributeError, TypeError):
             pass
 
@@ -1874,7 +1892,7 @@ def copy_nc4_with_tmbr_plus_rfi(
                 )
                 id_v.setncattr(
                     "description",
-                    "Maps CELL_RFI / GATE_RFI channel axis to TMBR channel index (value - 1).",
+                    "Maps CELL_RFI / GATE_RFI channel axis to TMBR / TMBR_RFI channel index (value - 1).",
                 )
 
             cell_v = ds.createVariable("CELL_RFI", tmbr_dtype, new_dims)

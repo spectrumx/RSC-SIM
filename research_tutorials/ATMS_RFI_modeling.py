@@ -17,7 +17,7 @@ per-channel CSVs and combined CSVs (``*_5G_RFI_combined.csv``,
 
 Full ITU-R P.676 atmospheric absorption; no polarization loss, terrain masking, or
 OOBE for 5G. Gateway modeling uses the same atmospheric path as the standalone
-gateway script. Cloud/rain slant attenuation (P.840 / P.838) scales summed RFI into ``TMBR``
+gateway script. Cloud/rain slant attenuation (P.840 / P.838) scales summed RFI into ``TMBR_RFI``
 and is stored as ``CLOUD_RAIN_ATT`` (dB) in ``*_RFI.nc4`` (see ``attenuation_mdl``).
 
 Usage:
@@ -30,7 +30,7 @@ Outputs (in out_dir, with nc4 stem as prefix):
   Combined: *_5G_RFI_combined.csv, *_Starlink_Gateway_RFI_combined.csv,
             *_5G_Starlink_Gateway_RFI_combined.csv (sum of Tb columns)
   Top 5: *_5G_Starlink_Gateway_top5.txt, *_5G_Starlink_Gateway_Attenuation_top5.txt
-  netCDF: <stem>_RFI.nc4 — ``TMBR`` (updated long_name) + summed RFI Tb on ch 3–9 (after cloud/rain
+  netCDF: <stem>_RFI.nc4 — native ``TMBR`` unchanged; ``TMBR_RFI`` = ``TMBR`` + summed RFI Tb on ch 3–9 (after cloud/rain
     path factor); ``CELL_RFI`` / ``GATE_RFI`` hold 5G-only and gateway-only Tb (K) on a compact channel axis (ch 3–9 only);
     ``CLOUD_RAIN_ATT`` slant attenuation (dB) on the same axis;
     same axis order as ``TMBR``; channel dim ``nchans_rfi`` (name sorts before ``obsNumber`` for
@@ -919,8 +919,8 @@ def main():
                 combined_rfi_df_starlink=df_sl_cr,
             )
             print(
-                f"Wrote RFI-augmented netCDF (TMBR with cloud/rain-scaled summed RFI, CELL_RFI, GATE_RFI, "
-                f"CLOUD_RAIN_ATT on ch 3–9) to {rfi_nc4}."
+                f"Wrote RFI-augmented netCDF (native TMBR unchanged; TMBR_RFI with cloud/rain-scaled summed RFI, "
+                f"CELL_RFI, GATE_RFI, CLOUD_RAIN_ATT on ch 3–9) to {rfi_nc4}."
             )
         except FileNotFoundError:
             raise
