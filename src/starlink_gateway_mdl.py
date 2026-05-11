@@ -24,6 +24,12 @@ For realistic NWP RFI modeling you can:
    RFI power and Tb for each (timestamp, satellite) over FOVs, matching the 5G pipeline
    pattern. ``sensor_name`` may be ``'ATMS'``, ``'AMSU-A'``, or ``'SSMI-S'`` for FOV ellipse geometry
    (SSMI-S uses fixed 27×18 km axes; pass ``ellipse_azimuth_deg`` for conical-scan orientation).
+
+**Out-of-band emissions (OOBE)** from the Starlink gateway uplink (assigned 51.4–52.4 GHz,
+``B_N`` = 1 GHz) are applied in the RFI driver scripts *after* direct link-budget RFI, using
+``starlink_gateway_uplink_oobe_attenuation_db`` (ITU-R SM.1541-style OOB segment and SM.329-style
+60 dB spur cap vs. offset from band edge). Sensor channel center frequency sets ``A(f)``; 5G is
+unchanged.
 """
 
 import numpy as np
@@ -56,6 +62,56 @@ _M_PER_DEG_LAT = 111320.0
 # elevation [25, 90] deg above local horizontal (see ``sample_gateway_boresight_az_el_uniform``).
 GATEWAY_RANDOM_EL_MIN_DEG = 25.0
 GATEWAY_RANDOM_EL_MAX_DEG = 90.0
+
+# Starlink gateway uplink OOBE mask (GHz-equivalent constants stored in Hz for script API).
+STARLINK_GATEWAY_UL_BAND_LOW_HZ = 51.4e9
+STARLINK_GATEWAY_UL_BAND_HIGH_HZ = 52.4e9
+STARLINK_GATEWAY_UL_BN_HZ = 1.0e9
+STARLINK_GATEWAY_OOBE_SPURIOUS_DB = 60.0
+STARLINK_GATEWAY_OOBE_F_MAX_PCT = 200.0
+
+
+def starlink_gateway_uplink_oobe_attenuation_db(sensor_center_freq_hz: float) -> float:
+    """
+    Out-of-band emission attenuation ``A(f)`` (dB) vs. sensor channel center ``f``.
+
+    Assigned gateway band is 51.4–52.4 GHz (inclusive); necessary bandwidth ``B_N`` = 1 GHz.
+    If ``f`` is in-band, returns 0. Otherwise uses nearest band edge, offset percentage ``F``
+    of ``B_N``, then SM.1541-style ``40*log10(F/50+1)`` dB for ``F <= 200`` else 60 dB
+    (spurious domain). ``sensor_center_freq_hz`` is the receiver channel center in Hz.
+
+    Example: ATMS channel 4 center ~51.76 GHz is in-band → 0 dB; channel 3 at 50.3 GHz is OOB
+    with positive ``A``.
+    """
+    f_ghz = float(sensor_center_freq_hz) / 1.0e9
+    lo = STARLINK_GATEWAY_UL_BAND_LOW_HZ / 1.0e9
+    hi = STARLINK_GATEWAY_UL_BAND_HIGH_HZ / 1.0e9
+    bn_ghz = STARLINK_GATEWAY_UL_BN_HZ / 1.0e9
+    if lo <= f_ghz <= hi:
+        return 0.0
+    f_edge = lo if f_ghz < lo else hi
+    f_pct = abs(f_ghz - f_edge) / bn_ghz * 100.0
+    if f_pct > STARLINK_GATEWAY_OOBE_F_MAX_PCT:
+        return float(STARLINK_GATEWAY_OOBE_SPURIOUS_DB)
+    return float(40.0 * np.log10(f_pct / 50.0 + 1.0))
+
+
+def apply_starlink_gateway_oobe_in_place(
+    rfi_power_dbw: np.ndarray,
+    rfi_tb_k: np.ndarray,
+    sensor_center_freq_hz: float,
+) -> float:
+    """
+    Apply OOBE mask in place: power dBW -= A, Tb K *= 10**(-A/10).
+
+    Returns:
+        ``A`` in dB (same as ``starlink_gateway_uplink_oobe_attenuation_db``).
+    """
+    a_db = starlink_gateway_uplink_oobe_attenuation_db(sensor_center_freq_hz)
+    lin = 10.0 ** (-a_db / 10.0)
+    rfi_power_dbw -= a_db
+    rfi_tb_k *= lin
+    return a_db
 
 
 def sample_gateway_boresight_az_el_uniform(

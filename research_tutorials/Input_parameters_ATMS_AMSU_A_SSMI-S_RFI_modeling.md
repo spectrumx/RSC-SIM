@@ -135,15 +135,17 @@ These are passed as `temperature`, `pressure`, and `humidity` into the RFI model
 
 ## 8. Starlink ground gateway (high impact when gateways fall in beam)
 
-Direct in-band RFI from fixed gateway sites. Gateway list: CLI **`--gateways_csv`** (default `research_tutorials/data/starlink_gateways_geolocations.csv`). Per-sensor script constants (names aligned across ATMS / AMSU-A / SSMI-S):
+Direct link-budget RFI from fixed gateway sites, then **uplink OOBE** vs. sensor channel center. Gateway list: CLI **`--gateways_csv`** (default `research_tutorials/data/starlink_gateways_geolocations.csv`). Per-sensor script constants (names aligned across ATMS / AMSU-A / SSMI-S):
 
 | Variable name | Location | Unit | Description |
 |---------------|----------|------|-------------|
 | `EIRP_PER_GATEWAY_DBW` | Each sensor script | dBW | Aggregate EIRP reference per gateway (default 70.5 dBW). |
 | `N_ANTENNAS_PER_GATEWAY` | Each sensor script | count | Antennas per site; scales gateway contribution in the model. Default 40 |
-| `gateway_center_freq_hz_list` | Each sensor script | Hz | Direct RFI carrier per modeled channel (typically near channel center). |
+| `gateway_center_freq_hz_list` | Each sensor script | Hz | Carrier frequency passed into the gateway link model per channel (typically channel center). |
 | `GATEWAY_GAIN_MAX`, `GATEWAY_HORIZ_BW`, `GATEWAY_VERT_BW`, `GATEWAY_ETA_RAD` | Each sensor script | dBi, deg, deg, — | Gateway sector pattern (same family as 5G sector builder). |
 | `GATEWAY_BORESIGHT_POINTING` | Each sensor script | bool | Boresight / random-boresight behavior (see script + `starlink_gateway_mdl`). |
+
+**OOBE mask (not a script constant list):** Implemented in `src/starlink_gateway_mdl.py` as `starlink_gateway_uplink_oobe_attenuation_db(sensor_center_freq_hz)` using assigned band **51.4–52.4 GHz** (in-band → **A = 0**), **B_N = 1 GHz**, OOB **A = 40·log10(F/50+1)** dB for **F ≤ 200%** of **B_N** from nearest edge, else **60 dB**. Applied after direct RFI: **`rfi_power_dBW` − A**, **`rfi_Tb_K` × 10^(−A/10)**. Sensor center `f` comes from each script’s channel config tuple.
 
 **Note:** Changing EIRP, N antenna of gateway, or pattern strongly changes `GATE_RFI` and the summed Tb. `CELL_RFI` / `GATE_RFI` in nc4 are **pre–cloud/rain** Tb; only the increment added to **`TMBR_RFI`** uses the attenuation factor.
 
@@ -188,7 +190,7 @@ Passed as `slant_range_km` and `elevation_deg` into `model_rfi_nwp_5g_single_tim
 6. **Weather satellite antenna pattern** (V-band CSV and loading parameters): angular dependence of receiver gain.
 7. **Channel bandwidth**: scales brightness temperature Tb = P / (k_B * B); does not change RFI power in dBW.
 8. **Atmospheric parameters** (`TEMPERATURE_K`, `PRESSURE_PA`, `HUMIDITY_PCT`): P.676 path loss (5G and gateway chains).
-9. **Starlink gateway** (`EIRP_PER_GATEWAY_DBW`, `N_ANTENNAS_PER_GATEWAY`, `gateway_center_freq_hz_list`, gateway antenna constants): sets gateway Tb and summed RFI.
+9. **Starlink gateway** (`EIRP_PER_GATEWAY_DBW`, `N_ANTENNAS_PER_GATEWAY`, `gateway_center_freq_hz_list`, gateway antenna constants): sets direct gateway Tb and power; **`starlink_gateway_uplink_oobe_attenuation_db`** then scales CSV / merged gateway Tb (5G unchanged).
 10. **Cloud/rain attenuation** (monthly `itu_iclw_rain_info_MM.nc`, `CLOUD_RAIN_ICLW_ABS_THRESHOLD`): scales the **summed** Tb increment into **`TMBR_RFI`**; does not rescale `CELL_RFI` / `GATE_RFI`.
 11. **SSMI-S geometry** (`SSMIS_SLANT_RANGE_KM`, `SSMIS_ELEVATION_DEG`): path length and elevation for SSMI-S only.
 

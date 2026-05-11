@@ -73,6 +73,8 @@ research_tutorials/
 
 After a successful run, the sensor directory typically gains (names depend on channel set): `{stem}_5G_RFI_ch*.csv`, `{stem}_Starlink_Gateway_RFI_ch*.csv`, combined `*_5G_RFI_combined.csv` and `*_Starlink_Gateway_RFI_combined.csv`, summed `*_5G_Starlink_Gateway_RFI_combined.csv`, `*_5G_Starlink_Gateway_top5.txt`, `*_5G_Starlink_Gateway_Attenuation_top5.txt` (effective Tb after path loss), and **`{stem}_RFI.nc4`** (copy of input nc4: native **`TMBR`** unchanged; new **`TMBR_RFI`** = native **`TMBR`** plus cloud/rain-scaled summed RFI on modeled channels; plus **`CELL_RFI`**, **`GATE_RFI`**, **`CLOUD_RAIN_ATT`** on the compact channel axis). Where pre-existing **`TMBR`** is missing (masked, non-finite, or large fill with value **`>= 1e10`**, plus other **`_FillValue`** / **`missing_value`** matches), those cells on **`TMBR_RFI`** for modeled channels are written as **`1e10`** (`NC4_MISSING_TMBR_OUT_RFI_NC4`; not the product fill **`10e10`**) and no RFI increment is applied there; **`CELL_RFI` / `GATE_RFI`** still hold **pre-attenuation** RFI Tb from the combined CSVs on those cells (diagnostic), except where the netCDF **mask** on **`TMBR`** suppresses writes.
 
+**Starlink gateway OOBE:** After the direct link-budget RFI at the gateway carrier, each channel applies an out-of-band emission mask **`A(f)`** in dB vs. the **sensor channel center** `f` (assigned gateway band 51.4–52.4 GHz, `B_N` = 1 GHz; ITU-R SM.1541 / SM.329-style piecewise law in `starlink_gateway_mdl.starlink_gateway_uplink_oobe_attenuation_db`). Per-channel CSVs and merged gateway Tb use **post-OOBE** power (`dBW − A`) and Tb (`× 10^(−A/10)`). 5G is unchanged. The unified `*_5G_Starlink_Gateway_top5.txt` prints **`A(f)`** per Starlink channel above each top-5 list.
+
 ---
 
 ## 3. Running RFI scripts (single nc4)
@@ -86,7 +88,7 @@ An example command is provided at each RFI modeling script (e.g., `ATMS_RFI_mode
 python ATMS_RFI_modeling.py --sensor ATMS --nc4 util/ATMS/atms.2023080112.nc4 --out_dir util/ATMS
 ```
 
-Outputs: per-channel **5G** and **Starlink_Gateway** CSVs; combined and **summed** CSVs; top-5 text files; **`{stem}_RFI.nc4`**. Per-channel CSVs (ch 3–9) include timestamp, satellite, lat, lon, saza, `rfi_power_dBW`, `rfi_brightness_temperature_K`.
+Outputs: per-channel **5G** and **Starlink_Gateway** CSVs; combined and **summed** CSVs; top-5 text files; **`{stem}_RFI.nc4`**. Per-channel CSVs (ch 3–9) include timestamp, satellite, lat, lon, saza, `rfi_power_dBW`, `rfi_brightness_temperature_K` (Starlink columns are **after** uplink OOBE; see previous section).
 
 ### AMSU-A (NOAA-15/18/19, METOP-B/C)
 

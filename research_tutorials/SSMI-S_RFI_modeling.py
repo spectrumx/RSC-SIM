@@ -1,8 +1,8 @@
 """
 RFI modeling for SSMI-S for NWP data biasing (5G + Starlink ground gateways).
 
-Computes (1) 5G ground-emitter RFI via second harmonic in band and (2) Starlink
-ground-gateway RFI (direct at channel center) for all FOVs in SSMI-S netCDF-4 files.
+Computes (1) 5G ground-emitter RFI via second harmonic in band and (2) Starlink ground-gateway RFI (direct link at gateway carrier, then uplink OOBE vs. sensor
+center) for all FOVs in SSMI-S netCDF-4 files.
 Each nc4 can contain multiple satellites (DMSP-F17, DMSP-F18); only SAID 285 (DMSP-F17)
 is processed for RFI when ECEF lookups exist—same as the standalone scripts. Parametric
 study over SSMI-S channels 1–5.
@@ -15,8 +15,10 @@ Starlink FOV footprints use fixed V-band ellipse (27 km × 18 km) from ``weather
 ellipse orientation uses ``calculate_ssmis_fov_bearing_vectorized`` when the FOV count per
 run is a multiple of 60, else North-aligned (see ``_ssmis_ellipse_azimuth_deg``).
 
-Full ITU-R P.676 atmospheric absorption; no polarization loss, terrain masking, or OOBE
-for 5G. Cloud/rain slant attenuation scales summed RFI into ``TMBR_RFI`` and is in ``CLOUD_RAIN_ATT`` (dB).
+Full ITU-R P.676 atmospheric absorption; no polarization loss, terrain masking, or OOBE for 5G.
+Starlink gateway CSVs apply uplink OOBE vs. sensor center (``starlink_gateway_mdl``) after
+direct link-budget RFI. Cloud/rain slant attenuation scales summed RFI into ``TMBR_RFI`` and
+is in ``CLOUD_RAIN_ATT`` (dB).
 
 Usage:
   python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 path [--out_dir dir] [--gateways_csv path]
@@ -55,10 +57,12 @@ from attenuation_mdl import (  # noqa: E402
     itu_iclw_rain_info_nc_path,
 )
 from starlink_gateway_mdl import (  # noqa: E402
+    apply_starlink_gateway_oobe_in_place,
     load_starlink_gateways,
     load_starlink_gateway_antenna_from_csv,
     model_rfi_nwp_starlink_gateway_single_time,
     model_rfi_nwp_starlink_gateway_single_time_in_fov_first,
+    starlink_gateway_uplink_oobe_attenuation_db,
 )
 from weather_sat_mdl import (  # noqa: E402
     create_5g_sector_antenna_pattern,
@@ -371,6 +375,7 @@ def run_rfi_for_channel_starlink_gateway(
     gateway_antenna,
     channel_num: int,
     center_freq_hz: float,
+    sensor_center_freq_hz: float,
     bandwidth_hz: float,
     out_csv: str,
     sensor_name: str = "SSMI-S",
@@ -381,7 +386,7 @@ def run_rfi_for_channel_starlink_gateway(
     gateway_boresight_pointing: bool = True,
     gateway_boresight_random_seed: Optional[int] = None,
 ):
-    """Starlink gateway RFI for one SSMI-S channel. Output CSV includes constant ``saza``."""
+    """Starlink gateway RFI for one channel; OOBE vs. ``sensor_center_freq_hz``; CSV has constant ``saza``."""
     lat = data["lat"]
     lon = data["lon"]
     timestamps = data["timestamps"]
@@ -448,6 +453,8 @@ def run_rfi_for_channel_starlink_gateway(
         rfi_dBW[idx_good] = rfi_db
         rfi_K[idx_good] = rfi_tb
 
+    apply_starlink_gateway_oobe_in_place(rfi_dBW, rfi_K, sensor_center_freq_hz)
+
     df = pd.DataFrame({
         "timestamp": timestamps,
         "satellite": satellite,
@@ -462,10 +469,43 @@ def run_rfi_for_channel_starlink_gateway(
     return df
 
 
-def _append_top5_block(top5_file, ch_header: str, df: pd.DataFrame):
+def _append_top5_block(
+    top5_file,
+    ch_header: str,
+    df: pd.DataFrame,
+    *,
+    oobe_atten_db: Optional[float] = None,
+    gateway_rfi_computed: bool = True,
+):
+    top5_file.write(f"\n{ch_header}\n")
+    if not gateway_rfi_computed:
+        msg = (
+            "  OOBE: N/A (gateway carrier out of channel passband; no direct RFI computed)."
+        )
+        print(msg)
+        top5_file.write(msg + "\n")
+    elif oobe_atten_db is not None:
+        line_a = (
+            f"  OOBE attenuation A(f) = {oobe_atten_db:.3f} dB "
+            f"(per channel; f = sensor center)."
+        )
+        print(line_a)
+        top5_file.write(line_a + "\n")
+        if oobe_atten_db <= 0.0:
+            line_b = (
+                "  Top-5 Tb and power are post-OOBE (in-band: A=0 dB; same as direct-only "
+                "gateway RFI)."
+            )
+        else:
+            line_b = (
+                "  Top-5 Tb and power are post-OOBE (direct gateway RFI, then ITU-R SM.1541 / "
+                "SM.329-style OOBE mask)."
+            )
+        print(line_b)
+        top5_file.write(line_b + "\n")
+
     rfi_K_float = df["rfi_brightness_temperature_K"].astype(float)
     idx_top5 = rfi_K_float.abs().nlargest(5).index
-    top5_file.write(f"\n{ch_header}\n")
     print("  Top 5 by |rfi_brightness_temperature_K|:")
     top5_file.write("  Top 5 by |rfi_brightness_temperature_K|:\n")
     for rank, row_idx in enumerate(idx_top5, start=1):
@@ -483,8 +523,8 @@ def main():
     t_start = time_module.perf_counter()
     parser = argparse.ArgumentParser(
         description=(
-            "SSMI-S RFI for NWP: 5G (harmonic) and Starlink gateways (direct); "
-            "SAID 285/DMSP-F17 when ECEF exists."
+            "SSMI-S RFI for NWP: 5G (harmonic) and Starlink gateways "
+            "(direct link + uplink OOBE mask); SAID 285/DMSP-F17 when ECEF exists."
         )
     )
     parser.add_argument(
@@ -733,10 +773,14 @@ def main():
         gc.collect()
 
         top5_file.write("\n" + "=" * 72 + "\n")
-        top5_file.write("Starlink ground gateways (direct RFI at channel center)\n")
+        top5_file.write(
+            "Starlink ground gateways (direct RFI at gateway freq; OOBE A(f) vs sensor center)\n"
+        )
         top5_file.write("=" * 72 + "\n")
         print("\n" + "=" * 72)
-        print("Starlink ground gateways (direct RFI at channel center)")
+        print(
+            "Starlink ground gateways (direct RFI at gateway freq; OOBE A(f) vs sensor center)"
+        )
         print("=" * 72)
 
         for idx_ch, (ch_num, ssmis_center_freq_hz, bandwidth_hz) in enumerate(SSMIS_CHANNEL_CONFIGS):
@@ -749,8 +793,9 @@ def main():
                 out_dir, f"{out_base_nc4}_{RFI_PREFIX_STARLINK}_RFI_ch{ch_num}.csv"
             )
             print(
-                f"\n[Starlink] Channel {ch_num}: {gateway_center_freq_hz/1e9:.2f} GHz, "
-                f"BW={bandwidth_hz/1e6:.0f} MHz (direct RFI at gateway center freq)"
+                f"\n[Starlink] Channel {ch_num}: gateway {gateway_center_freq_hz/1e9:.2f} GHz, "
+                f"sensor center {ssmis_center_freq_hz/1e9:.2f} GHz, "
+                f"BW={bandwidth_hz/1e6:.0f} MHz (direct link + OOBE mask)"
             )
 
             t0_ch = time_module.perf_counter()
@@ -770,6 +815,8 @@ def main():
                 })
                 df.to_csv(out_csv, index=False)
                 print(f"  Wrote {out_csv} ({len(df):,} rows)")
+                oobe_db = None
+                gw_computed = False
             else:
                 df = run_rfi_for_channel_starlink_gateway(
                     data,
@@ -780,6 +827,7 @@ def main():
                     gateway_antenna,
                     ch_num,
                     gateway_center_freq_hz,
+                    ssmis_center_freq_hz,
                     bandwidth_hz,
                     out_csv,
                     sensor_name="SSMI-S",
@@ -790,16 +838,25 @@ def main():
                     gateway_boresight_pointing=gw_bore_pt,
                     gateway_boresight_random_seed=args.gateway_boresight_random_seed,
                 )
+                oobe_db = starlink_gateway_uplink_oobe_attenuation_db(ssmis_center_freq_hz)
+                gw_computed = True
             print(
                 f"  [Starlink] Channel {ch_num} done in "
                 f"{time_module.perf_counter() - t0_ch:.1f} s"
             )
 
             ch_header = (
-                f"[Starlink] Channel {ch_num}: {gateway_center_freq_hz/1e9:.2f} GHz, "
-                f"BW={bandwidth_hz/1e6:.0f} MHz (direct RFI)"
+                f"[Starlink] Channel {ch_num}: gateway {gateway_center_freq_hz/1e9:.2f} GHz, "
+                f"sensor center {ssmis_center_freq_hz/1e9:.2f} GHz, "
+                f"BW={bandwidth_hz/1e6:.0f} MHz (direct link + OOBE mask)"
             )
-            _append_top5_block(top5_file, ch_header, df)
+            _append_top5_block(
+                top5_file,
+                ch_header,
+                df,
+                oobe_atten_db=oobe_db,
+                gateway_rfi_computed=gw_computed,
+            )
 
     print(f"\nTop 5 summary written to {top5_path}")
 
