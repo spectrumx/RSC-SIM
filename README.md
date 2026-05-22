@@ -45,6 +45,24 @@ This contains additional learning resources and examples and serves as a referen
 
 Details can be found at the `research_tutorials/README.md`.
 
+## Interactive Demo App
+
+A Streamlit-based dashboard for poking at RSC-SIM live (sliders, sky maps, Earth maps) lives under `demo_app/`. From the repo root:
+
+```bash
+# Create + activate a virtual environment (skip if you already have one)
+python -m venv rsc-sim-env
+source rsc-sim-env/bin/activate    # Windows: rsc-sim-env\Scripts\activate
+
+# Install RSC-SIM plus the demo extras (Streamlit, Plotly, pydeck, Folium)
+pip install -e ".[demo]"
+
+# Launch the app
+streamlit run demo_app/app.py
+```
+
+Streamlit prints a `localhost` URL (default `http://localhost:8501`); open it in any browser. See `demo_app/README.md` for the full tour and booth checklist.
+
 ## Installation
 
 ### Prerequisites

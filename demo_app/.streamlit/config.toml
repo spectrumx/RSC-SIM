@@ -1,0 +1,26 @@
+# Streamlit configuration for the RSC-SIM conference demo.
+#
+# Streamlit auto-loads this file when invoked from `demo_app/`. To run with it:
+#     cd demo_app && streamlit run app.py
+# Or, when launching from the repo root, pass --server.headless and friends
+# explicitly (see demo_app/README.md).
+
+[server]
+headless = true
+runOnSave = false
+fileWatcherType = "none"
+port = 8501
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = "full"
+toolbarMode = "minimal"
+
+[theme]
+base = "dark"
+primaryColor = "#ff7f0e"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1e1f25"
+textColor = "#fafafa"
