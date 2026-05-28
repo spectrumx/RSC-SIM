@@ -551,7 +551,7 @@ def render() -> None:
     left, right = main.columns([1, 1])
     with left:
         st.markdown("**Effective Tb contributions at FOV**")
-        st.plotly_chart(_stacked_budget_figure(budget), width="stretch")
+        st.plotly_chart(_stacked_budget_figure(budget))
 
     with right:
         st.markdown("**Antenna pattern**")
@@ -571,7 +571,7 @@ def render() -> None:
             float(st.session_state.wx_gateway_lat),
             float(st.session_state.wx_gateway_lon),
         )
-        st.plotly_chart(geo_fig, width="stretch")
+        st.plotly_chart(geo_fig)
 
         st.caption(
             "Phase 1 model: Starlink back-lobe interference + Earth Tb + sky background "

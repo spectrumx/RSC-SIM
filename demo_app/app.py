@@ -33,6 +33,26 @@ import sim_cache  # noqa: E402
 from panels import gallery, radio_astro, weather_fov  # noqa: E402
 
 
+def _inject_layout_css() -> None:
+    """Tighten Streamlit's default top padding above the page title."""
+    st.markdown(
+        """
+        <style>
+        div.block-container {
+            padding-top: 1rem;
+        }
+        section.main > div.block-container {
+            padding-top: 1rem;
+        }
+        .stMainBlockContainer {
+            padding-top: 1rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _configure_page() -> None:
     st.set_page_config(
         page_title="RSC-SIM Demo",
@@ -42,6 +62,7 @@ def _configure_page() -> None:
         # starts collapsed (and is empty by default).
         initial_sidebar_state="collapsed",
     )
+    _inject_layout_css()
 
 
 def _global_header() -> None:

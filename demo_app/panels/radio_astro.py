@@ -12,6 +12,7 @@ This module imports `sim_cache` as a top-level module: `app.py` puts
 
 from __future__ import annotations
 
+import inspect
 from datetime import datetime
 from typing import Optional, Tuple
 
@@ -46,6 +47,7 @@ from shared.config import (  # type: ignore  # noqa: E402
     RECEIVER_TEMP,
     TELESCOPE_COORDS,
     TELESCOPE_FREQ_BAND,
+    TIME_ON_SOURCE,
 )
 
 
@@ -55,7 +57,7 @@ from shared.config import (  # type: ignore  # noqa: E402
 
 
 _DEMO_DEFAULTS = {
-    "ra_constellation": True,
+    "ra_constellation": False,
     "ra_beam_avoid_deg": 0.0,
     "ra_n_sats": 0,  # 0 = all satellites
     "ra_direct_sat": "(all satellites)",
@@ -70,6 +72,14 @@ _DEMO_DEFAULTS = {
 def _reset_to_defaults() -> None:
     for key, value in _DEMO_DEFAULTS.items():
         st.session_state[key] = value
+
+
+def _on_constellation_toggle() -> None:
+    """When Starlink is enabled, reset satellite sub-options to booth defaults."""
+    if st.session_state.ra_constellation:
+        st.session_state.ra_beam_avoid_deg = 0.0
+        st.session_state.ra_n_sats = 0
+        st.session_state.ra_direct_sat = "(all satellites)"
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +121,17 @@ def _compute_sky_map(
             point_obs = Observation.from_dates(
                 time_plot, time_plot, Trajectory(point_df), instrument
             )
-            result = model_observed_temp(point_obs, sky_mdl, constellation)
+            use_beam_avoid = (
+                state.beam_avoid_deg > 0
+                and state.constellation_enabled
+                and constellation is not None
+            )
+            result = model_observed_temp(
+                point_obs,
+                sky_mdl,
+                constellation,
+                beam_avoidance=use_beam_avoid,
+            )
             map_grid[i, j] = result[0, 0, 0]
 
     return map_grid, az_grid, el_grid
@@ -218,13 +238,76 @@ def _tb_to_dbw(tb_k: np.ndarray, bandwidth_hz: float) -> np.ndarray:
     return 10.0 * np.log10(np.clip(power_w, 1e-300, None))
 
 
+def _show_plotly(fig: go.Figure) -> None:
+    """
+    Render Plotly full-width without tripping Streamlit's ``**kwargs`` deprecation.
+
+    Streamlit < 1.51 captures ``width=`` in ``**kwargs`` and shows a warning; use
+    ``use_container_width`` there. Streamlit >= 1.51 has a real ``width`` param.
+    """
+    params = inspect.signature(st.plotly_chart).parameters
+    if "width" in params:
+        st.plotly_chart(fig, width="stretch")
+    elif "use_container_width" in params:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.plotly_chart(fig)
+
+
+def _add_off_on_source_regions(fig: go.Figure) -> None:
+    """Shade and label the Cas A OFF-source / ON-source segments (tutorial plan)."""
+    t_start = np.datetime64(pd.Timestamp(OBSERVATION_START))
+    t_on = np.datetime64(pd.Timestamp(TIME_ON_SOURCE))
+    t_end = np.datetime64(pd.Timestamp(OBSERVATION_END))
+    t_mid_off = t_start + (t_on - t_start) / 2
+    t_mid_on = t_on + (t_end - t_on) / 2
+
+    fig.add_vrect(
+        x0=t_start,
+        x1=t_on,
+        fillcolor="gray",
+        opacity=0.12,
+        layer="below",
+        line_width=0,
+    )
+    fig.add_vrect(
+        x0=t_on,
+        x1=t_end,
+        fillcolor="steelblue",
+        opacity=0.08,
+        layer="below",
+        line_width=0,
+    )
+    fig.add_vline(
+        x=t_on,
+        line=dict(color="gray", width=1, dash="dash"),
+        opacity=0.75,
+    )
+    fig.add_annotation(
+        x=t_mid_off,
+        y=1.0,
+        yref="paper",
+        text="OFF-source",
+        showarrow=False,
+        font=dict(size=11, color="#aaaaaa"),
+    )
+    fig.add_annotation(
+        x=t_mid_on,
+        y=1.0,
+        yref="paper",
+        text="ON-source",
+        showarrow=False,
+        font=dict(size=11, color="#aaaaaa"),
+    )
+
+
 def _time_series_figure(
     times: np.ndarray,
     p_no_sat_dbw: np.ndarray,
-    p_with_sat_dbw: np.ndarray,
+    p_with_sat_dbw: Optional[np.ndarray],
     p_with_avoid_dbw: Optional[np.ndarray],
-    threshold_dbw: float,
     selected_time: Optional[datetime] = None,
+    beam_avoid_deg: Optional[float] = None,
 ) -> go.Figure:
     """Plotly time series of received power scenarios (dBW)."""
     fig = go.Figure()
@@ -237,32 +320,34 @@ def _time_series_figure(
             line=dict(color="#2ca02c", width=2),
         )
     )
-    fig.add_trace(
-        go.Scatter(
-            x=times,
-            y=p_with_sat_dbw,
-            name="With Starlink",
-            mode="lines",
-            line=dict(color="#1f77b4", width=2),
+    if p_with_sat_dbw is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=times,
+                y=p_with_sat_dbw,
+                name="With Starlink",
+                mode="lines",
+                line=dict(color="#1f77b4", width=2),
+            )
         )
-    )
     if p_with_avoid_dbw is not None:
+        avoid_label = (
+            f"Beam avoidance ({beam_avoid_deg:g}°)"
+            if beam_avoid_deg is not None
+            else "Beam avoidance"
+        )
         fig.add_trace(
             go.Scatter(
                 x=times,
                 y=p_with_avoid_dbw,
-                name="Beam avoidance",
+                name=avoid_label,
                 mode="lines",
                 line=dict(color="#ff7f0e", width=2, dash="dot"),
             )
         )
 
-    fig.add_hline(
-        y=threshold_dbw,
-        line=dict(color="red", width=1, dash="dash"),
-        annotation_text=f"Threshold {threshold_dbw:.1f} dBW",
-        annotation_position="top right",
-    )
+    _add_off_on_source_regions(fig)
+
     if selected_time is not None:
         fig.add_vline(
             x=selected_time,
@@ -275,8 +360,8 @@ def _time_series_figure(
         yaxis_title="Received power [dBW]",
         hovermode="x unified",
         height=380,
-        margin=dict(l=10, r=10, t=10, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(l=10, r=10, t=28, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.08),
     )
     return fig
 
@@ -453,7 +538,7 @@ def render() -> None:
             _reset_to_defaults()
             st.rerun()
 
-        with st.expander("Time", expanded=True):
+        with st.expander("Time for Sky map", expanded=True):
             obs_minutes = (OBSERVATION_END - OBSERVATION_START).total_seconds() / 60.0
             st.slider(
                 "Minutes from start of observation",
@@ -492,13 +577,19 @@ def render() -> None:
             )
 
         with st.expander("Satellites", expanded=True):
-            st.toggle("Include Starlink constellation", key="ra_constellation")
+            st.toggle(
+                "Include Starlink constellation",
+                key="ra_constellation",
+                on_change=_on_constellation_toggle,
+            )
+            constellation_on = bool(st.session_state.ra_constellation)
             st.slider(
                 "Beam avoidance [deg] (0 = off)",
                 0.0,
                 20.0,
                 key="ra_beam_avoid_deg",
                 step=1.0,
+                disabled=not constellation_on,
             )
             sat_names = list_starlink_satellite_names()
             n_sats_max = max(1, min(60, len(sat_names)))
@@ -508,12 +599,14 @@ def render() -> None:
                 n_sats_max,
                 key="ra_n_sats",
                 step=1,
+                disabled=not constellation_on,
             )
             sat_options = ["(all satellites)"] + sat_names
             st.selectbox(
                 "Direct mode (one satellite)",
                 sat_options,
                 key="ra_direct_sat",
+                disabled=not constellation_on,
             )
 
         with st.expander("Sky map resolution", expanded=False):
@@ -531,54 +624,53 @@ def render() -> None:
     main = main_col
 
     state = _build_state()
+    constellation_on = state.constellation_enabled
 
     # ------------------------------------------------------------------
-    # Run simulations: with-current-state + always-on baselines
+    # Run simulations: clean baseline always; Starlink runs when enabled
     # ------------------------------------------------------------------
     no_sat_state = _state_with(state, constellation_enabled=False, beam_avoid_deg=0.0)
-    full_with_sat_state = _state_with(state, constellation_enabled=True, beam_avoid_deg=0.0)
-    full_avoid_state = _state_with(state, constellation_enabled=True, beam_avoid_deg=10.0)
+    show_beam_avoid = state.beam_avoid_deg > 0 and constellation_on
 
     with main, st.spinner("Running observations..."):
         result_no = compute_observation_result(no_sat_state)
-        result_with = compute_observation_result(full_with_sat_state)
-        result_avoid = compute_observation_result(full_avoid_state)
-        result_current = compute_observation_result(state)
+        if constellation_on:
+            full_with_sat_state = _state_with(
+                state, constellation_enabled=True, beam_avoid_deg=0.0
+            )
+            result_with = compute_observation_result(full_with_sat_state)
+            result_current = compute_observation_result(state)
+        else:
+            result_with = None
+            result_current = result_no
 
     times_ns = np.asarray(result_no["times"], dtype="int64")
     times = times_ns.astype("datetime64[ns]")
 
     # RSC-SIM's Looking-Up tutorials report received power (dBW). Convert the
     # raw Tb-array results from `model_observed_temp` to power here so every
-    # downstream display (metrics, time series, threshold) is in dBW.
+    # downstream display (metrics, time series) is in dBW.
     bw_hz = state.bandwidth_hz
     p_no_w = temperature_to_power(np.asarray(result_no["tb_k"]), bw_hz)
-    p_with_w = temperature_to_power(np.asarray(result_with["tb_k"]), bw_hz)
-    p_avoid_w = temperature_to_power(np.asarray(result_avoid["tb_k"]), bw_hz)
     p_current_w = temperature_to_power(np.asarray(result_current["tb_k"]), bw_hz)
 
     p_no_dbw = 10.0 * np.log10(np.clip(p_no_w, 1e-300, None))
-    p_with_dbw = 10.0 * np.log10(np.clip(p_with_w, 1e-300, None))
-    p_avoid_dbw = 10.0 * np.log10(np.clip(p_avoid_w, 1e-300, None))
     p_current_dbw = 10.0 * np.log10(np.clip(p_current_w, 1e-300, None))
+    if constellation_on:
+        p_with_w = temperature_to_power(np.asarray(result_with["tb_k"]), bw_hz)
+        p_with_dbw = 10.0 * np.log10(np.clip(p_with_w, 1e-300, None))
+        p_avoid_dbw = p_current_dbw if show_beam_avoid else None
+    else:
+        p_with_dbw = None
+        p_avoid_dbw = None
+        p_current_dbw = p_no_dbw
 
     # ------------------------------------------------------------------
     # Headline metrics (Looking-Up case: power in dBW)
     # ------------------------------------------------------------------
-    metric_cols = main.columns(4)
+    metric_cols = main.columns(2)
     metric_cols[0].metric("Visible satellites", f"{result_current['n_sats']}")
     metric_cols[1].metric("Peak power [dBW]", f"{np.nanmax(p_current_dbw):.1f}")
-    interference_db = p_current_dbw - p_no_dbw
-    metric_cols[2].metric(
-        "Peak excess [dB]",
-        f"{np.nanmax(interference_db):.1f}",
-        delta=f"{np.nanmean(interference_db):.2f} mean",
-    )
-    # 5σ threshold computed in linear power, then expressed in dBW.
-    threshold_w = float(np.nanmean(p_no_w) + 5.0 * (np.nanstd(p_no_w) + 1e-300))
-    threshold_dbw = 10.0 * np.log10(max(threshold_w, 1e-300))
-    over = float(np.mean(p_current_w > threshold_w) * 100)
-    metric_cols[3].metric("% time over threshold", f"{over:.1f}%")
 
     # ------------------------------------------------------------------
     # Plots: sky map (left) + time series (right)
@@ -602,7 +694,11 @@ def render() -> None:
             az_grid = np.array([0])
             el_grid = np.array([0])
 
-        sat_az, sat_el, _ = _satellite_positions_at_time(state, time_plot)
+        sat_az, sat_el, _ = (
+            _satellite_positions_at_time(state, time_plot)
+            if constellation_on
+            else (np.array([]), np.array([]), [])
+        )
         src_az, src_el = _source_position_at_time(time_plot)
 
         pointing_az = pointing_el = None
@@ -633,88 +729,110 @@ def render() -> None:
             p_no_dbw,
             p_with_dbw,
             p_avoid_dbw,
-            threshold_dbw,
             selected_time=time_plot,
+            beam_avoid_deg=state.beam_avoid_deg if show_beam_avoid else None,
         )
-        st.plotly_chart(ts_fig, width="stretch")
-        st.caption(
-            "Power at the receiver in dBW (Looking-Up convention). "
-            "Green = clean observation; blue = Starlink on; orange dotted = "
-            "10° beam avoidance; red dashed = 5σ threshold above clean baseline."
-        )
+        _show_plotly(ts_fig)
+        if constellation_on:
+            avoid_caption = (
+                f"orange dotted = {state.beam_avoid_deg:g}° beam avoidance"
+                if show_beam_avoid
+                else "orange dotted = beam avoidance (set slider > 0°)"
+            )
+            st.caption(
+                "Power at the receiver in dBW (Looking-Up convention). "
+                "Green = clean observation; blue = Starlink on (no avoidance); "
+                f"{avoid_caption}. Shaded bands: OFF-source (first 5 min) then "
+                "ON-source (Cas A tracked)."
+            )
+        else:
+            st.caption(
+                "Power at the receiver in dBW (Looking-Up convention). "
+                "Green = clean observation (Starlink off). Shaded bands: "
+                "OFF-source (first 5 min) then ON-source (Cas A tracked)."
+            )
 
     # ------------------------------------------------------------------
     # Earth map of ground tracks
     # ------------------------------------------------------------------
-    with main.expander("Satellite ground tracks (Earth view)", expanded=False):
-        track_df = _ground_track_dataframe(state)
-        if track_df.empty:
-            st.info("No satellite tracks to plot for the current selection.")
+    with main.expander("Satellite ground tracks (Earth view)", expanded=True):
+        if not constellation_on:
+            st.info("Enable **Include Starlink constellation** to view ground tracks.")
         else:
-            try:
-                import pydeck as pdk
+            track_df = _ground_track_dataframe(state)
+            if track_df.empty:
+                st.info("No satellite tracks to plot for the current selection.")
+            else:
+                try:
+                    import pydeck as pdk
 
-                view_state = pdk.ViewState(
-                    latitude=TELESCOPE_COORDS[0],
-                    longitude=TELESCOPE_COORDS[1],
-                    zoom=2.5,
-                    pitch=0,
-                )
-                layers = [
-                    pdk.Layer(
-                        "ScatterplotLayer",
-                        data=track_df.rename(
-                            columns={"lon": "longitude", "lat": "latitude"}
+                    view_state = pdk.ViewState(
+                        latitude=TELESCOPE_COORDS[0],
+                        longitude=TELESCOPE_COORDS[1],
+                        zoom=2.5,
+                        pitch=0,
+                    )
+                    layers = [
+                        pdk.Layer(
+                            "ScatterplotLayer",
+                            data=track_df.rename(
+                                columns={"lon": "longitude", "lat": "latitude"}
+                            ),
+                            get_position="[longitude, latitude]",
+                            get_fill_color="[30, 144, 255, 60]",
+                            get_radius=20000,
+                            pickable=True,
                         ),
-                        get_position="[longitude, latitude]",
-                        get_fill_color="[30, 144, 255, 60]",
-                        get_radius=20000,
-                        pickable=True,
-                    ),
-                    pdk.Layer(
-                        "ScatterplotLayer",
-                        data=pd.DataFrame(
-                            [
-                                {
-                                    "longitude": TELESCOPE_COORDS[1],
-                                    "latitude": TELESCOPE_COORDS[0],
-                                    "label": "Westford",
-                                }
-                            ]
+                        pdk.Layer(
+                            "ScatterplotLayer",
+                            data=pd.DataFrame(
+                                [
+                                    {
+                                        "longitude": TELESCOPE_COORDS[1],
+                                        "latitude": TELESCOPE_COORDS[0],
+                                        "label": "Westford",
+                                    }
+                                ]
+                            ),
+                            get_position="[longitude, latitude]",
+                            get_fill_color="[255, 165, 0, 220]",
+                            get_radius=80000,
+                            pickable=True,
                         ),
-                        get_position="[longitude, latitude]",
-                        get_fill_color="[255, 165, 0, 220]",
-                        get_radius=80000,
-                        pickable=True,
-                    ),
-                ]
-                st.pydeck_chart(
-                    pdk.Deck(
-                        layers=layers,
-                        initial_view_state=view_state,
-                        map_style=None,
-                        tooltip={"text": "{sat}"},
+                    ]
+                    st.pydeck_chart(
+                        pdk.Deck(
+                            layers=layers,
+                            initial_view_state=view_state,
+                            map_style=None,
+                            tooltip={"text": "{sat}"},
+                        )
                     )
-                )
-            except Exception as exc:
-                st.warning(f"Earth map unavailable ({exc}); falling back to a 2D plot.")
-                fig2 = go.Figure(
-                    go.Scattergeo(
-                        lat=track_df["lat"],
-                        lon=track_df["lon"],
-                        text=track_df["sat"],
-                        mode="markers",
-                        marker=dict(size=4, color="blue", opacity=0.4),
+                except Exception as exc:
+                    st.warning(
+                        f"Earth map unavailable ({exc}); falling back to a 2D plot."
                     )
-                )
-                fig2.add_trace(
-                    go.Scattergeo(
-                        lat=[TELESCOPE_COORDS[0]],
-                        lon=[TELESCOPE_COORDS[1]],
-                        text=["Westford"],
-                        mode="markers+text",
-                        marker=dict(size=10, color="orange"),
+                    fig2 = go.Figure(
+                        go.Scattergeo(
+                            lat=track_df["lat"],
+                            lon=track_df["lon"],
+                            text=track_df["sat"],
+                            mode="markers",
+                            marker=dict(size=4, color="blue", opacity=0.4),
+                        )
                     )
-                )
-                fig2.update_layout(geo=dict(showland=True), height=420, margin=dict(l=0, r=0, t=0, b=0))
-                st.plotly_chart(fig2, width="stretch")
+                    fig2.add_trace(
+                        go.Scattergeo(
+                            lat=[TELESCOPE_COORDS[0]],
+                            lon=[TELESCOPE_COORDS[1]],
+                            text=["Westford"],
+                            mode="markers+text",
+                            marker=dict(size=10, color="orange"),
+                        )
+                    )
+                    fig2.update_layout(
+                        geo=dict(showland=True),
+                        height=420,
+                        margin=dict(l=0, r=0, t=0, b=0),
+                    )
+                    _show_plotly(fig2)

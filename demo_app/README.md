@@ -65,16 +65,17 @@ Tweakable controls (left **Controls** column, in-tab):
 
 - Time scrubber within the 45-minute Cas A pass
 - Center frequency and bandwidth (clamped to the antenna's valid band)
-- Beam-avoidance angle (0 deg = off)
-- Number of satellites included (subset of the Starlink trajectory)
-- Direct-mode dropdown to mirror `tuto_radiomdl_direct.py`
+- **Include Starlink constellation** toggle (off by default for a clean start)
+- Beam-avoidance angle (0 deg = off; disabled until constellation is on)
+- Number of satellites included (0 = all; disabled until constellation is on)
+- Direct-mode dropdown to mirror `tuto_radiomdl_direct.py` (disabled until constellation is on)
 
 Live outputs (Looking-Up case — power in **dBW**, matching RSC-SIM tutorials):
 
 - Polar sky map with telescope gain in dBW, satellite markers, and Cas A
 - Plotly received-power time-series (dBW) with shaded interference events
 - Earth map of satellite ground tracks (pydeck)
-- Headline tile: peak power [dBW], peak excess [dB], fraction of time over a threshold
+- Headline tiles: visible satellite count and peak received power [dBW]
 
 ### 2. Weather satellite single FOV
 
