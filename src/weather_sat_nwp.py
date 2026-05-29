@@ -231,19 +231,10 @@ def get_emitter_density(lat_lon: list, *, supported_5g_countries: dict[str, str]
     country_name = supported_5g_countries[country_code]
     if population > 10000:
         terrain_type = 'Ultra-dense urban'
-        emitter_density_per_km2 = 30.0
-    elif population > 5000:
-        terrain_type = 'Dense urban'
         emitter_density_per_km2 = 15.0
-    elif population > 1500:
-        terrain_type = 'Urban'
-        emitter_density_per_km2 = 5.0
-    elif population > 300:
-        terrain_type = 'Suburban'
-        emitter_density_per_km2 = 3.0
     else:
-        terrain_type = 'Open/Rural'
-        emitter_density_per_km2 = 1.0
+        terrain_type = 'below ultra-dense urban threshold'
+        emitter_density_per_km2 = 0.0
 
     print(f"[{lat:7.4f}, {lon:8.4f}] -> Country: '{country_name}', "
           f"Population: {population:7.0f}, Terrain: '{terrain_type}', Density: {emitter_density_per_km2}")
@@ -387,14 +378,8 @@ def _population_to_density(
     if population <= 0 or country_code not in supported_5g_countries:
         return 0.0
     if population > 10000:
-        return 30.0
-    if population > 5000:
         return 15.0
-    if population > 1500:
-        return 5.0
-    if population > 300:
-        return 3.0
-    return 1.0
+    return 0.0
 
 
 def get_emitter_density_vectorized(

@@ -83,11 +83,11 @@ Effective EIRP per FOV is `eirp_per_emitter_dbw + 10*log10(n_emitters)`. So dens
 |---------------|----------|------|-------------|
 | `country_5G_sensor_channel.csv` | `research_tutorials/data/` | CSV | Rows list countries; columns `country_name`, `ISO`, `ATMS`, `AMSU_A`, `SSMI_S`. A country is included for a given sensor channel when that sensor’s column equals the channel number (integer). |
 | `load_country_5g_sensor_channel_csv`, `supported_5g_countries_for_channel` | `src/weather_sat_nwp.py` | — | Load the CSV once; build `dict[str, str]` (ISO → name) per sensor and channel for `get_emitter_density_vectorized(..., supported_5g_countries=...)`. |
-| Population thresholds and density values | `src/weather_sat_nwp.py` (inside `_population_to_density()` function) | population per km²; density per km² | Logic: population > 10000 (Ultra-dense urban) → 30.0; > 5000 (Dense urban) → 15.0; > 1500 (Urban) → 5.0; > 300 (Suburban) → 3; else (Open/Rural) → 1. Units: emitter density per km². |
+| Population thresholds and density values | `src/weather_sat_nwp.py` (inside `_population_to_density()` function) | population per km²; density per km² | Logic: population > 10000 (Ultra-dense urban) → 15.0; all other population tiers (> 5000, > 1500, > 300, and Open/Rural) → 0. Units: emitter density per km². |
 
 Density is computed by `get_emitter_density_vectorized(lat, lon, supported_5g_countries=...)` using the European Union (EU) GHSL population raster and reverse geocoder for country. Only FOVs whose ISO code appears in the per-channel allowlist get non-zero density.
 
-**Note:** Adjust the population tiers and density values in `_population_to_density` to match deployment density (e.g., urban vs suburban vs rural), which will directly affect RFI. Edit `country_5G_sensor_channel.csv` to change which countries contribute emitters for each sensor channel.
+**Note:** Only ultra-dense urban cells (population > 10000 per km²) receive non-zero emitter density (15 emitters/km²). Adjust the population threshold and density value in `_population_to_density` if deployment assumptions change. Edit `country_5G_sensor_channel.csv` to change which countries contribute emitters for each sensor channel.
 
 ### 5.2 FOV dimensions and n_emitters
 
@@ -183,7 +183,7 @@ Passed as `slant_range_km` and `elevation_deg` into `model_rfi_nwp_5g_single_tim
 ## 11. Summary: parameters with the strongest effect on RFI (dBW and K)
 
 1. **EIRP per emitter** (`EIRP_PER_EMITTER_DBW` or `TRANSMIT_POWER_DBW` + `GROUND_EMITTER_GAIN_MAX`): linear in dB for 5G RFI power.
-2. **Emitter density and FOV area** (population tiers in `_population_to_density`, `SENSOR_BEAMWIDTH_DEG`, SSMI-S FOV constants): set n_emitters and thus effective EIRP (10*log10(n_emitters)).
+2. **Emitter density and FOV area** (population threshold in `_population_to_density`, `SENSOR_BEAMWIDTH_DEG`, SSMI-S FOV constants): set n_emitters and thus effective EIRP (10*log10(n_emitters)).
 3. **Second harmonic factor** (`second_harmonic_factor` in `weather_sat_nwp.py`): linear scaling of 5G received power; change requires code edit.
 4. **Emitter fundamental frequency** (`emitter_fundamental_hz_list`): must place second harmonic in channel band; also affects free-space and atmospheric loss via frequency.
 5. **5G antenna pattern** (`GROUND_EMITTER_*`): angular dependence of emitter gain.
