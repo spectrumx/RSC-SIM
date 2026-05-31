@@ -28,6 +28,7 @@ from sim_cache import (
     compute_observation_result,
     list_starlink_satellite_names,
     load_cas_a_trajectory,
+    load_pointing_trajectory,
     load_starlink_trajectory_df,
     make_constellation,
     make_observation,
@@ -702,7 +703,8 @@ def render() -> None:
         src_az, src_el = _source_position_at_time(time_plot)
 
         pointing_az = pointing_el = None
-        traj = load_cas_a_trajectory().get_traj()
+        # OFF-source uses Cas A + OFFSET_ANGLES; ON-source tracks Cas A (see sim_cache).
+        traj = load_pointing_trajectory().get_traj()
         if not traj.empty:
             diffs = (traj["times"] - pd.Timestamp(time_plot)).abs()
             row = traj.loc[diffs.idxmin()]
