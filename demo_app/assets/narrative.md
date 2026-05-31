@@ -28,41 +28,26 @@ These are the suggested talk tracks for each tab. Read them top-to-bottom while 
 
 ---
 
-## Tab 2: Weather satellite single FOV
+## Tab 2: Weather satellite single FOV (Looking-Down)
 
 > "Now we flip the geometry: a weather satellite (Suomi-NPP / JPSS) looking
 > **down** at Earth. Its passive microwave radiometer is trying to measure
-> atmospheric brightness temperature, but Starlink **back-lobes** leak power
-> upward and contaminate the measurement.
+> atmospheric brightness temperature, but **Starlink back-lobes** and **5G mmWave**
+> towers leak power upward and contaminate the measurement.
 >
-> Pick the **K-Band channel at 23.8 GHz** -- water vapor channel, used in
-> numerical weather prediction. The bar chart on the right shows the Tb budget:
-> Earth, sky, system noise, plus a Starlink contribution.
+> Both **K-Band (23.8 GHz)** and **V-Band (50.3 GHz)** channels are shown at once —
+> water vapor and oxygen channels used in numerical weather prediction. The chart
+> is received **RFI power in dBW**, not brightness temperature: Starlink dashed,
+> 5G dotted, for each band.
 >
-> Now slide to the **V-Band 50.3 GHz** channel -- atmospheric oxygen, used to
-> retrieve temperature profiles. Different harmonics of the Starlink fundamental
-> end up in different channels, so the Starlink contribution shifts.
+> Drag **time** — the vertical marker moves along the overpass without recomputing.
+> The headline tiles update for that instant: visible Starlinks, fundamentals, and
+> K-/V-Bands RFIs. The table above the chart is the **peak** RFIs over the whole pass.
 >
-> If we have the 5G data and gateway file staged, you can also drop a Starlink
-> gateway anywhere on the map and watch it light up the FOV when the satellite
-> flies over."
-
----
-
-## Tab 3: Pre-baked gallery
-
-> "Some of the analyses are too heavy for live demo -- like the full
-> numerical-weather-prediction pipeline that processes a 12-hour ATMS scan.
-> We've baked those results out and you can flip through them here.
->
-> On the left, the **native ATMS brightness temperature**. On the right, the
-> same scan **after RFI is added**. The difference is what an operational NWP
-> assimilation system would see if mitigation isn't applied.
->
-> The waterfall in the lower panel is a **Doppler signature** -- one Starlink
-> sweeping across our radio receiver band as it passes overhead. The streak is
-> the carrier shifting in frequency, exactly the kind of feature that confuses
-> automatic RFI flaggers."
+> Now bump **5G emitter density** or slide **5G fundamental frequency** toward
+> 23.8 or 50.3 GHz — watch harmonics land in K-band or V-band. Starlink sliders
+> do the same from the other side. That's the coexistence question NWP operators
+> care about: terrestrial and constellation RFI in the same channels ATMS uses."
 
 ---
 
@@ -71,4 +56,3 @@ These are the suggested talk tracks for each tab. Read them top-to-bottom while 
 - Keep the time scrubber moving. A static plot reads as broken; a moving plot reads as live.
 - All controls live in the **Controls** column on the left side of each tab; switching tabs swaps the entire control set.
 - "Reset to demo defaults" before each new visitor.
-- If the laptop hiccups, jump to the **Gallery** tab; the images render instantly.

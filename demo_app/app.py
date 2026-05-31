@@ -7,7 +7,7 @@ Run with:
 The app exposes three tabs:
 
 1. Starlink vs. radio telescope (live, headline)
-2. Weather satellite single FOV (live, Phase 1)
+2. Weather satellite single FOV (live, Phase 2 demo)
 3. Pre-baked scenario gallery (fallback, requires `precompute.py`)
 
 This entry-point is intentionally thin: each tab lives in its own module under
@@ -100,7 +100,8 @@ def main() -> None:
         [
             "Starlink vs. radio telescope",
             "Weather satellite FOV",
-            "Pre-baked gallery",
+            # for now, Pre-baked gallery is commented out
+            # "Pre-baked gallery",
         ]
     )
 
@@ -108,8 +109,9 @@ def main() -> None:
         radio_astro.render()
     with tabs[1]:
         weather_fov.render()
-    with tabs[2]:
-        gallery.render()
+    # for now, Pre-baked gallery is commented out
+    # with tabs[2]:
+    #     gallery.render()
 
 
 if __name__ == "__main__":

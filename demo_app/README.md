@@ -6,16 +6,15 @@ A live, interactive Streamlit dashboard for showcasing **RSC-SIM** at conference
 
 ```
 demo_app/
-  app.py                 # Streamlit entry point with three tabs
-  sim_cache.py           # Cached loaders (Antenna, Trajectory, Constellation, sky models)
-  precompute.py          # Optional: pre-render scenario PNGs / NPZ files for the gallery
+  app.py                       # Streamlit entry point with two tabs
+  sim_cache.py                 # Cached loaders (Antenna, Trajectory, Constellation, sky models)
   panels/
-    radio_astro.py       # Tab 1: Starlink vs. radio telescope (live)
-    weather_fov.py       # Tab 2: Weather satellite single FOV (live, Phase 1)
-    gallery.py           # Tab 3: Pre-baked NWP / Doppler scenarios (fallback)
+    radio_astro.py             # Tab 1: Starlink vs. radio telescope (live)
+    weather_fov.py             # Tab 2: Weather satellite single FOV (live, Phase 2 demo)
+    weather_phase2_loaders.py  # Cached Phase-2 RFI loaders for Tab 2
   assets/
-    narrative.md         # Booth-friendly scripts and captions
-  README.md              # This file
+    narrative.md               # Booth-friendly scripts and captions
+  README.md                    # This file
 ```
 
 ## Quick start
@@ -79,22 +78,25 @@ Live outputs (Looking-Up case — power in **dBW**, matching RSC-SIM tutorials):
 
 ### 2. Weather satellite single FOV
 
-Live (Phase 1) version of `research_tutorials/tuto_radiomdl_weather_phase1.py`:
+Live Phase-2 demo based on `research_tutorials/tuto_radiomdl_weather_phase2.py` (Suomi-NPP / JPSS ATMS, Westford 32 km FOV, 2025-11-01 overpass):
 
-- Sensor band: K-Band 23.8 GHz vs. V-Band 50.3 GHz
-- 5G emitter density slider (Phase 2 hooks - shown only when phase data is staged)
-- Starlink gateway location pickable on a Folium map (Phase 2)
-- Time scrubber within a JPSS overpass
+- **Both** K-Band (23.8 GHz) and V-Band (50.3 GHz) RFI time series on one chart
+- Starlink back/side-lobe RFI (full phase-2 ECEF model) + **5G mmWave** via equivalent emitter at FOV center
+- Starlink controls: fundamental freq (10.7–12.7 GHz), EIRP
+- 5G controls: mmWave fundamental freq (23.8–50.3 GHz), EIRP (−8.5 to 40 dBW), emitter density (1–50 / km²)
+- Time scrubber adds a marker on the series (does not recompute on drag)
 
-Outputs include the FOV ground footprint, gateway location, and stacked Tb contributions.
+Live outputs (RFI power in **dBW**):
 
-### 3. Pre-baked gallery
+- Instantaneous metrics for Starlink and 5G (visible Starlinks, fundamentals, K/V RFI at selected time)
+- Peak RFI table (Starlink / 5G × K / V max over the overpass)
+- Plotly dual-subplot RFI time series with vertical time marker
+- Collapsible **Antenna patterns** and **Satellite positions** PNGs under `demo_app/assets/gallery/` (optional)
+- FOV ground footprint map (Westford center)
 
-Fallback for heavy NWP runs and the Doppler waterfall. Reads pre-rendered PNGs / numpy archives under `demo_app/assets/`. Generate them once with:
+Demo simplifications: 10 s time grid, no DEM, Starlink elev filter at 0° (no DTC; bundled trajectory already uses a ~5° pass mask at creation), atmospheric loss disabled, 2nd harmonic factor 0.01 (−20 dBc), 3 dB polarization loss for Starlink, negligible RFI shown as −500 dBW.
 
-```bash
-python demo_app/precompute.py
-```
+Optional gallery PNGs: `starlink_antenna_pattern.png`, `ground_emitter_5g_antenna_pattern.png`, `weather_sat_antenna_patterns.png`, `satellite_positions.png`.
 
 ## Booth checklist
 
@@ -103,16 +105,9 @@ Before opening the booth:
 1. Pre-warm the cache: launch the app, click through each tab once, drag a slider so the simulation runs.
 2. Verify offline: disable Wi-Fi and re-load the page. Should still work; only Streamlit's "version available" toast may complain.
 3. Confirm bundled data files exist in `research_tutorials/data/`:
-   - `single_cut_res.cut`
-   - `casA_trajectory_Westford_*.arrow`
-   - `Starlink_trajectory_Westford_*.arrow`
-   - `jpss_trajectory_Westford_*.arrow` (for the weather tab)
-   - `K-Band 23.8 GHz absolute antenna pattern.csv`, `V-Band 50.3 GHz absolute antenna pattern.csv`
-4. Stretch / heavy data (only if running gallery from scratch):
-   - `GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif`
-   - `itu_iclw_rain_info_MM.nc`
-5. Pre-render gallery scenarios with `python demo_app/precompute.py` (offline-safe).
-6. Practice the 60-second narrative under `demo_app/assets/narrative.md`.
+   - **Tab 1:** `single_cut_res.cut`, `casA_trajectory_Westford_2025-02-18*.arrow`, `Starlink_trajectory_Westford_2025-02-18*.arrow`
+   - **Tab 2:** `jpss_trajectory_Westford_2025-11-01*.arrow`, `Starlink_trajectory_Westford_2025-11-01*.arrow`, `K-Band 23.8 GHz absolute antenna pattern.csv`, `V-Band 50.3 GHz absolute antenna pattern.csv`
+4. Practice the 60-second narrative under `demo_app/assets/narrative.md`.
 
 ## Troubleshooting
 
