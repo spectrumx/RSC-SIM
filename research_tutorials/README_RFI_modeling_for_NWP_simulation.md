@@ -10,7 +10,7 @@ Some input nc4 products encode **missing** float fields near **`1e11`** (nominal
 
 ## 1. Download GHS-POP data (`GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif`)
 
-European Union's Global Human Settlement Layer (GHSL) Population data (GHG-POP) needs to be downloaded from EU [Global Human Settlement Layer (GHSL)](https://human-settlement.emergency.copernicus.eu/download.php?ds=pop) for Epoch: 2025, Resolution: 30 arcsec (~1 km²), and Coordinate system: WGS84. It is zip compressed but only `GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif` file is required. Please place it at `research_tutorials/data/`. It is used for 5G ground emitter density in ATMS/AMSU-A/SSMI-S RFI scripts. Emitter density is assigned per km² from GHSL population and country allowlist (`country_5G_sensor_channel.csv`): **population > 10000 → 15 emitters/km²**; all other population tiers (> 5000, > 1500, > 300, and rural/open) → **0**. See `_population_to_density()` in `src/weather_sat_nwp.py` and `Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md` §5.1.
+European Union's Global Human Settlement Layer (GHSL) population data (GHS-POP raster) needs to be downloaded from EU [Global Human Settlement Layer (GHSL)](https://human-settlement.emergency.copernicus.eu/download.php?ds=pop) for Epoch: 2025, Resolution: 30 arcsec (~1 km²), and Coordinate system: WGS84. It is zip compressed but only `GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0.tif` file is required. Please place it at `research_tutorials/data/`. It is used for 5G ground emitter density in ATMS/AMSU-A/SSMI-S RFI scripts. Emitter density is assigned per km² from GHSL population and country allowlist (`country_5G_sensor_channel.csv`): **population > 10000 → 15 emitters/km²**; all other population tiers (> 5000, > 1500, > 300, and rural/open) → **0**. See `_population_to_density()` in `src/weather_sat_nwp.py` and `Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md` §5.1.
 
 ## 1-1. Download monthly ITU grids (`itu_iclw_rain_info_MM.nc`)
 ITU cloud/rain grid file contains monthly mean/std of the integrated cloud liquid water content and rain fields for the consideration of cloud/rain attenuation. Place `itu_iclw_rain_info_MM.nc` (e.g. `…_08.nc` for August) in `research_tutorials/data/`. Month **MM** is inferred from the date token in the nc4/CSV stem: either ``sensor_yyyymmddhh...`` or ``sensor.yyyymmddhh...`` before the first ``_5G_`` segment (same rule as ``itu_iclw_rain_info_nc_path`` in ``attenuation_mdl``). If the file is missing, the RFI scripts raise **FileNotFoundError** (no silent 0 dB fallback). Note that since the file size is large, they are stored in a cloud storage.
@@ -71,15 +71,20 @@ research_tutorials/
   Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md
 ```
 
-After a successful run, the sensor directory typically gains (names depend on channel set): `{stem}_5G_RFI_ch*.csv`, `{stem}_Starlink_Gateway_RFI_ch*.csv`, combined `*_5G_RFI_combined.csv` and `*_Starlink_Gateway_RFI_combined.csv`, summed `*_5G_Starlink_Gateway_RFI_combined.csv`, `*_5G_Starlink_Gateway_top5.txt`, `*_5G_Starlink_Gateway_Attenuation_top5.txt` (effective Tb after path loss), and **`{stem}_RFI.nc4`** (copy of input nc4: native **`TMBR`** unchanged; new **`TMBR_RFI`** = native **`TMBR`** plus cloud/rain-scaled summed RFI on modeled channels; plus **`CELL_RFI`**, **`GATE_RFI`**, **`CLOUD_RAIN_ATT`** on the compact channel axis). Where pre-existing **`TMBR`** is missing (masked, non-finite, or large fill with value **`>= 1e10`**, plus other **`_FillValue`** / **`missing_value`** matches), those cells on **`TMBR_RFI`** for modeled channels are written as **`1e10`** (`NC4_MISSING_TMBR_OUT_RFI_NC4`; not the product fill **`10e10`**) and no RFI increment is applied there; **`CELL_RFI` / `GATE_RFI`** still hold **pre-attenuation** RFI Tb from the combined CSVs on those cells (diagnostic), except where the netCDF **mask** on **`TMBR`** suppresses writes.
+After a successful run, the sensor directory typically gains (names depend on channel set): `{stem}_5G_RFI_ch*.csv`, `{stem}_Starlink_Gateway_RFI_ch*.csv`, combined `*_5G_RFI_combined.csv` and `*_Starlink_Gateway_RFI_combined.csv`, summed `*_5G_Starlink_Gateway_RFI_combined.csv`, `*_5G_Starlink_Gateway_top5.txt`, `*_5G_Starlink_Gateway_Attenuation_top5.txt` (top-5 **combined** 5G + gateway Tb after **cloud/rain** scaling only; gaseous ITU P.676 is already in the per-channel CSV values), and **`{stem}_RFI.nc4`** (copy of input nc4: native **`TMBR`** unchanged; new **`TMBR_RFI`** = native **`TMBR`** plus cloud/rain-scaled summed RFI on modeled channels; plus **`CELL_RFI`**, **`GATE_RFI`**, **`CLOUD_RAIN_ATT`** on the compact channel axis). Where pre-existing **`TMBR`** is missing (masked, non-finite, or large fill with value **`>= 1e10`**, plus other **`_FillValue`** / **`missing_value`** matches), those cells on **`TMBR_RFI`** for modeled channels are written as **`1e10`** (`NC4_MISSING_TMBR_OUT_RFI_NC4`; not the product fill **`10e10`**) and no RFI increment is applied there; **`CELL_RFI` / `GATE_RFI`** still hold RFI Tb from the combined CSVs on those cells (**pre–cloud/rain**; **`GATE_RFI`** is **post-OOBE** where gateway RFI was computed), except where the netCDF **mask** on **`TMBR`** suppresses writes.
 
-**Starlink gateway OOBE:** After the direct link-budget RFI at the gateway carrier, each channel applies an out-of-band emission mask **`A(f)`** in dB vs. the **sensor channel center** `f` (assigned gateway band 51.4–52.4 GHz, `B_N` = 1 GHz; ITU-R SM.1541 / SM.329-style piecewise law in `starlink_gateway_mdl.starlink_gateway_uplink_oobe_attenuation_db`). Per-channel CSVs and merged gateway Tb use **post-OOBE** power (`dBW − A`) and Tb (`× 10^(−A/10)`). 5G is unchanged. The unified `*_5G_Starlink_Gateway_top5.txt` prints **`A(f)`** per Starlink channel above each top-5 list.
+**5G atmospheric loss (V-band scripts):** Uplink ITU-R P.676 and free-space loss use the **2nd-harmonic frequency** (`2 × emitter_fundamental_freq`), not the 5G fundamental. See `Input_parameters_ATMS_AMSU_A_SSMI-S_RFI_modeling.md` §4 and §7.
+
+**Starlink gateway (direct link + OOBE):** The gateway link budget uses **`gateway_center_freq_hz`** passed into `model_rfi_nwp_starlink_gateway_single_time` (default in scripts: **sensor channel center**, same as `freq_hz` for ITU P.676 and FSPL). That is separate from two other frequency checks:
+
+1. **Sensor passband gate** — if `gateway_center_freq_hz` lies outside the channel `[center ± BW/2]`, the script writes **zero** gateway RFI and skips the link budget (no OOBE applied).
+2. **Uplink OOBE mask** — after a non-zero direct link budget, **`A(f)`** in dB vs. **sensor channel center** and the assigned Starlink uplink band **51.4–52.4 GHz** (`B_N` = 1 GHz; ITU-R SM.1541 / SM.329-style law in `starlink_gateway_uplink_oobe_attenuation_db`). Per-channel gateway CSVs use **post-OOBE** power (`dBW − A`) and Tb (`× 10^(−A/10)`). 5G is unchanged. The unified `*_5G_Starlink_Gateway_top5.txt` prints **`A(f)`** per Starlink channel above each top-5 list.
 
 ---
 
 ## 3. Running RFI scripts (single nc4)
 
-Run from **`research_tutorials/`**. Arguments: `--sensor` (required), `--nc4` (required), `--out_dir` (optional; default is the nc4 directory), **`--gateways_csv`** (optional; default `data/starlink_gateways_geolocations.csv`). ECEF lookups load from the same folder as the nc4 (`*_ECEF_lookup_{stem}.csv`).
+Run from **`research_tutorials/`**. Arguments: `--sensor` (required), `--nc4` (required), `--out_dir` (optional; default is the nc4 directory), **`--gateways_csv`** (optional; default `data/starlink_gateways_geolocations.csv`), **`--attenuation_first`** (optional; Starlink only — if set, runs the legacy “attenuation before in-FOV” gateway path for speed comparison; default is in-FOV-first, same physics). ECEF lookups load from the same folder as the nc4 (`*_ECEF_lookup_{stem}.csv`).
 An example command is provided at each RFI modeling script (e.g., `ATMS_RFI_modeling.py` etc.)
 
 ### ATMS (SUOMI-NPP, JPSS-1; SAID 224, 225)
@@ -157,14 +162,17 @@ Outputs match section 3 (5G + gateway CSVs, combined/summed files, top-5 files, 
 
 ---
 
-## Note
+## Note: keeping per-channel CSV files
 
-- If you are interested in both RFI power in dBW and brightness temperature in Kelvin, then please set the argument `remove_channel_files` as `False` (`remove_channel_files=False`) at the `combine_channel_csvs()` function call, which is located around the end of each sensor's RFI modeling script (`ATMS_RFI_modeling.py`, `AMSU-A_RFI_modeling.py`, and `SSMI-S_RFI_modeling.py`). This will keep the output CSVs, RFI per channel. Currently, it is set to be `True` to save disk space.
+Each script calls `combine_channel_csvs(..., remove_channel_files=True)` by default so **per-channel** `*_5G_RFI_chN.csv` and `*_Starlink_Gateway_RFI_chN.csv` files are **deleted after** the combined CSVs are written (saves disk space). Combined and summed CSVs, top-5 text files, and `{stem}_RFI.nc4` are still produced.
 
+To **retain** per-channel CSVs (e.g. for dBW and Tb per channel), set `remove_channel_files=False` on both `combine_channel_csvs()` calls near the end of `ATMS_RFI_modeling.py`, `AMSU-A_RFI_modeling.py`, and `SSMI-S_RFI_modeling.py`:
+
+```python
+combined_5g = combine_channel_csvs(
+    out_dir, out_base_nc4, remove_channel_files=False, rfi_prefix=RFI_PREFIX_5G
+)
+combined_sl = combine_channel_csvs(
+    out_dir, out_base_nc4, remove_channel_files=False, rfi_prefix=RFI_PREFIX_STARLINK
+)
 ```
-...
-  combined_path = combine_channel_csvs(out_dir, out_base_nc4, remove_channel_files=False)
-...
-```
-
-This will remove intermidiately generated CSV files for each channel, which will save disk space.
