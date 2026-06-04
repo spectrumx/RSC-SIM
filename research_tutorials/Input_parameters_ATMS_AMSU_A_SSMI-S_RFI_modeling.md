@@ -67,7 +67,7 @@ The model assumes interference enters the sensor via the second harmonic of the 
 
 | Variable name | Location | Unit | Description |
 |---------------|----------|------|-------------|
-| `second_harmonic_factor` | `src/weather_sat_nwp.py` (inside `model_rfi_nwp_5g_single_time()` and `model_rfi_nwp_5g_single_time_ssmis()` functions) | linear | Fraction of fundamental power at the second harmonic. Default **1e-6** (i.e. **-60 dBc**). Multiplies the fundamental link budget before conversion to received power. |
+| `second_harmonic_factor` | `src/weather_sat_nwp.py` (inside `model_rfi_nwp_5g_single_time()` and `model_rfi_nwp_5g_single_time_ssmis()` functions) | linear | Fraction of fundamental power at the second harmonic. Default **1e-6** (i.e. **-60 dBc**). Applied on the uplink link budget evaluated at **2nd-harmonic frequency** (FSPL and ITU-R P.676 at `2 * emitter_fundamental_freq`). |
 
 **Note:** This is hardcoded in the core module. Changing it requires editing `weather_sat_nwp.py`. Other dBc levels: `second_harmonic_factor = 10**(dBc/10)` with dBc negative (e.g. -40 dBc → `1e-4`).
 
@@ -185,7 +185,7 @@ Passed as `slant_range_km` and `elevation_deg` into `model_rfi_nwp_5g_single_tim
 1. **EIRP per emitter** (`EIRP_PER_EMITTER_DBW` or `TRANSMIT_POWER_DBW` + `GROUND_EMITTER_GAIN_MAX`): linear in dB for 5G RFI power.
 2. **Emitter density and FOV area** (population threshold in `_population_to_density`, `SENSOR_BEAMWIDTH_DEG`, SSMI-S FOV constants): set n_emitters and thus effective EIRP (10*log10(n_emitters)).
 3. **Second harmonic factor** (`second_harmonic_factor` in `weather_sat_nwp.py`): linear scaling of 5G received power; change requires code edit.
-4. **Emitter fundamental frequency** (`emitter_fundamental_hz_list`): must place second harmonic in channel band; also affects free-space and atmospheric loss via frequency.
+4. **Emitter fundamental frequency** (`emitter_fundamental_hz_list`): must place second harmonic in channel band; FSPL and ITU-R P.676 use **harmonic frequency** (`2 * fundamental`), not the fundamental.
 5. **5G antenna pattern** (`GROUND_EMITTER_*`): angular dependence of emitter gain.
 6. **Weather satellite antenna pattern** (V-band CSV and loading parameters): angular dependence of receiver gain.
 7. **Channel bandwidth**: scales brightness temperature Tb = P / (k_B * B); does not change RFI power in dBW.
