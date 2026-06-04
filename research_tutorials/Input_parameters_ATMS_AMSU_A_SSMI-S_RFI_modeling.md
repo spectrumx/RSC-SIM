@@ -10,7 +10,7 @@ The three RFI modeling scripts are:
 
 Shared 5G / density logic: `src/weather_sat_nwp.py`, `src/weather_sat_mdl.py`. Gateway geometry and antennas: `src/starlink_gateway_mdl.py`. Cloud/rain grids and attenuation: `src/attenuation_mdl.py` (P.840 / P.838); nc4 merge: `copy_nc4_with_tmbr_plus_rfi` in `weather_sat_nwp.py`.
 
-**NC4 missing fill:** Product missing values are near **`1e11`** (nominal **`10e10`**, often slightly lower after float32 storage) for most float fields. Code treats any finite float **`>= NC4_MISSING_FLOAT_MIN` (`1e10`)** as that large sentinel (not exact equality to **`10e10`**). **HMSL** (ATMS/AMSU-A) uses **`NC4_MISSING_HMSL_VALUE` (`-9999`)** only, via **`scalar_altitude_m_from_hmsl`**, not the **`~1e11`** band. `weather_sat_nwp` exposes `NC4_MISSING_FLOAT`, `NC4_MISSING_FLOAT_MIN`, `NC4_MISSING_HMSL_VALUE`, `replace_missing_with_nan`, `scalar_altitude_m_from_hmsl` (mean HMSL or `DEFAULT_LEO_ALTITUDE_M`), and `obs_valid_cross_track` / `obs_valid_ssmis_conical` so RFI rows stay aligned while invalid observations get zero RFI and zero cloud/rain attenuation where lat/lon are not finite. In **`{stem}_RFI.nc4`**, **`TMBR`** stays identical to the input file; **`TMBR_RFI`** holds native **`TMBR`** plus cloud/rain-scaled summed RFI on modeled channels. **`copy_nc4_with_tmbr_plus_rfi`** treats pre-existing **`TMBR`** as missing (for deciding the increment) if masked, non-finite, **`>= 1e10`** in the large-sentinel band, or matching smaller **`_FillValue`** / **`missing_value`** entries; on those cells for modeled channels only, **`TMBR_RFI`** is set to **`1e10`** (`NC4_MISSING_TMBR_OUT_RFI_NC4`; no RFI increment; distinct from product fill **`10e10`** / **`NC4_MISSING_FLOAT`**). **`CELL_RFI` / `GATE_RFI`** still record pre-attenuation RFI Tb from the combined CSVs there (diagnostic), except where the netCDF **mask** on **`TMBR`** applies.
+**NC4 missing fill:** Product missing values are near **`1e11`** (nominal **`10e10`**, often slightly lower after float32 storage) for most float fields. Code treats any finite float **`>= NC4_MISSING_FLOAT_MIN` (`1e10`)** as that large sentinel (not exact equality to **`10e10`**). **HMSL** (ATMS/AMSU-A) uses **`NC4_MISSING_HMSL_VALUE` (`-9999`)** only, via **`scalar_altitude_m_from_hmsl`**, not the **`~1e11`** band. `weather_sat_nwp` exposes `NC4_MISSING_FLOAT`, `NC4_MISSING_FLOAT_MIN`, `NC4_MISSING_HMSL_VALUE`, `replace_missing_with_nan`, `scalar_altitude_m_from_hmsl` (mean HMSL or `DEFAULT_LEO_ALTITUDE_M`), and `obs_valid_cross_track` / `obs_valid_ssmis_conical` so RFI rows stay aligned while invalid observations get zero RFI and zero cloud/rain attenuation where lat/lon are not finite. In **`{stem}_RFI.nc4`**, **`TMBR`** stays identical to the input file; **`TMBR_RFI`** holds native **`TMBR`** plus cloud/rain-scaled summed RFI on modeled channels. **`copy_nc4_with_tmbr_plus_rfi`** treats pre-existing **`TMBR`** as missing (for deciding the increment) if masked, non-finite, **`>= 1e10`** in the large-sentinel band, or matching smaller **`_FillValue`** / **`missing_value`** entries; on those cells for modeled channels only, **`TMBR_RFI`** is set to **`1e10`** (`NC4_MISSING_TMBR_OUT_RFI_NC4`; no RFI increment; distinct from product fill **`10e10`** / **`NC4_MISSING_FLOAT`**). **`CELL_RFI`** and **`GATE_RFI`** hold Tb from the 5G and gateway combined CSVs (**pre–cloud/rain**). **`GATE_RFI`** is **post-OOBE** where gateway RFI was computed; **`CELL_RFI`** is 5G-only (no OOBE). Only the increment added to **`TMBR_RFI`** applies the cloud/rain factor. Diagnostic values are still written where the netCDF **mask** on **`TMBR`** allows.
 
 ---
 
@@ -24,7 +24,7 @@ These set the effective isotropic radiated power per emitter. Linear change in E
 | `GROUND_EMITTER_GAIN_MAX` | Each sensor script | dBi | Peak gain of the 5G sector antenna at boresight. Default 24.5 dBi (ITU-R M.2101 / 3GPP 8x8 phased array). |
 | `EIRP_PER_EMITTER_DBW` | Each sensor script | dBW | EIRP per emitter at boresight. Computed as `TRANSMIT_POWER_DBW + GROUND_EMITTER_GAIN_MAX` (default -8.5 dBW). Passed to the RFI model as `eirp_per_emitter_dbw`. |
 
-**Note:** EIRP per emitter is the main lever for overall RFI level. Adjust `TRANSMIT_POWER_DBW` and/or `GROUND_EMITTER_GAIN_MAX` (or set `EIRP_PER_EMITTER_DBW` directly if the script allows) to match deployment assumptions (e.g., different regulatory limits or antenna types).
+**Note:** EIRP per emitter is the main lever for overall RFI level. Adjust `TRANSMIT_POWER_DBW` and/or `GROUND_EMITTER_GAIN_MAX` (or set `EIRP_PER_EMITTER_DBW` directly if the script allows) to match deployment assumptions (e.g., different regulatory limits or antenna types). The sensor scripts pass **`EIRP_PER_EMITTER_DBW`** (default **−8.5 dBW**) into `model_rfi_nwp_5g_single_time`; the core function’s own default (`eirp_per_emitter_dbw=30` in `weather_sat_nwp.py`) applies only if you call the model without the script.
 
 ---
 
@@ -57,7 +57,7 @@ Observation frequency and bandwidth determine which harmonic falls in band and h
 
 The model uses `freq_hz` (channel center), `bandwidth_hz`, and `emitter_fundamental_freq` in the core functions `model_rfi_nwp_5g_single_time` (ATMS/AMSU-A) and `model_rfi_nwp_5g_single_time_ssmis` (SSMI-S). If the second harmonic falls outside the channel band, RFI is set to zero.
 
-**Note:** Ensure emitter fundamental and channel center/bandwidth are consistent with the actual 5G band plan (e.g., n258/n261) and sensor channelization. Bandwidth directly scales Tb (K); center frequency affects harmonic-in-band check and atmospheric loss.
+**Note:** Ensure emitter fundamental and channel center/bandwidth are consistent with the actual 5G band plan (e.g., n258/n261) and sensor channelization. Scripts default to **`emitter_fundamental = channel_center / 2`** so the 2nd harmonic equals the channel center. If you change **`emitter_fundamental_hz_list`** alone, the in-band check still uses **`freq_hz`** and **`bandwidth_hz`**, while FSPL and ITU-R P.676 follow **`2 × emitter_fundamental_freq`** — keep those lists consistent. Bandwidth directly scales Tb (K); **`freq_hz`** sets the passband gate only (not gaseous loss for 5G).
 
 ---
 
@@ -119,7 +119,12 @@ The V-band antenna pattern of the weather satellite scales the link budget as a 
 
 ## 7. Atmospheric loss (ITU-R P.676) (moderate impact)
 
-Atmospheric absorption is computed from elevation (and optionally distance) and affects the link budget. Same parameters are used for ATMS, AMSU-A, and SSMI-S.
+Gaseous absorption uses **`calculate_comprehensive_atmospheric_loss_vectorized`** in `weather_sat_mdl` with the same **`TEMPERATURE_K`**, **`PRESSURE_PA`**, and **`HUMIDITY_PCT`** for ATMS, AMSU-A, and SSMI-S. The **frequency** passed to ITU differs by source:
+
+| Source | ITU / FSPL frequency | Notes |
+|--------|----------------------|--------|
+| **5G** | **`2 × emitter_fundamental_freq`** (2nd harmonic) | One evaluation per FOV; `freq_hz` is channel center for in-band check and Tb only. |
+| **Starlink gateway** | **`freq_hz`** in `model_rfi_nwp_starlink_gateway_single_time` | Default from scripts: **channel center** (`gateway_center_freq_hz_list`). OOBE mask **`A(f)`** is applied afterward vs. sensor center (§8). |
 
 | Variable name | Location | Unit | Description |
 |---------------|----------|------|-------------|
@@ -127,27 +132,31 @@ Atmospheric absorption is computed from elevation (and optionally distance) and 
 | `PRESSURE_PA` | Each sensor script | Pa | Surface pressure. Default 101325. |
 | `HUMIDITY_PCT` | Each sensor script | % | Relative humidity. Default 50.0. |
 
-These are passed as `temperature`, `pressure`, and `humidity` into the RFI model, which calls `calculate_comprehensive_atmospheric_loss_vectorized` in `weather_sat_mdl`.
+5G emitters are placed at **15 m** altitude above WGS84 inside `model_rfi_nwp_5g_single_time` (not a script constant).
 
-**Note:** For climatological or scenario studies, adjust to representative values. Humidity and pressure have a noticeable effect on absorption, especially in the 50–55 GHz band.
+**Note:** For climatological or scenario studies, adjust T/P/RH to representative values. Humidity and pressure have a noticeable effect on absorption, especially in the 50–55 GHz band used by the current V-band channel sets.
 
 ---
 
 ## 8. Starlink ground gateway (high impact when gateways fall in beam)
 
-Direct link-budget RFI from fixed gateway sites, then **uplink OOBE** vs. sensor channel center. Gateway list: CLI **`--gateways_csv`** (default `research_tutorials/data/starlink_gateways_geolocations.csv`). Per-sensor script constants (names aligned across ATMS / AMSU-A / SSMI-S):
+Fixed gateway sites: **direct uplink link budget**, then **regulatory OOBE mask** vs. sensor channel center. Gateway list: CLI **`--gateways_csv`** (default `research_tutorials/data/starlink_gateways_geolocations.csv`). Optional CLI **`--attenuation_first`** selects the legacy Starlink compute order (same physics; default is in-FOV-first). Per-sensor script constants (names aligned across ATMS / AMSU-A / SSMI-S):
 
 | Variable name | Location | Unit | Description |
 |---------------|----------|------|-------------|
 | `EIRP_PER_GATEWAY_DBW` | Each sensor script | dBW | Aggregate EIRP reference per gateway (default 70.5 dBW). |
 | `N_ANTENNAS_PER_GATEWAY` | Each sensor script | count | Antennas per site; scales gateway contribution in the model. Default 40 |
-| `gateway_center_freq_hz_list` | Each sensor script | Hz | Carrier frequency passed into the gateway link model per channel (typically channel center). |
+| `gateway_center_freq_hz_list` | Each sensor script | Hz | Frequency **`freq_hz`** for gateway FSPL and ITU-R P.676 (default: **sensor channel center**). |
 | `GATEWAY_GAIN_MAX`, `GATEWAY_HORIZ_BW`, `GATEWAY_VERT_BW`, `GATEWAY_ETA_RAD` | Each sensor script | dBi, deg, deg, — | Gateway sector pattern (same family as 5G sector builder). |
 | `GATEWAY_BORESIGHT_POINTING` | Each sensor script | bool | Boresight / random-boresight behavior (see script + `starlink_gateway_mdl`). |
 
-**OOBE mask (not a script constant list):** Implemented in `src/starlink_gateway_mdl.py` as `starlink_gateway_uplink_oobe_attenuation_db(sensor_center_freq_hz)` using assigned band **51.4–52.4 GHz** (in-band → **A = 0**), **B_N = 1 GHz**, OOB **A = 40·log10(F/50+1)** dB for **F ≤ 200%** of **B_N** from nearest edge, else **60 dB**. Applied after direct RFI: **`rfi_power_dBW` − A**, **`rfi_Tb_K` × 10^(−A/10)**. Sensor center `f` comes from each script’s channel config tuple.
+**Three frequency-related checks (do not confuse them):**
 
-**Note:** Changing EIRP, N antenna of gateway, or pattern strongly changes `GATE_RFI` and the summed Tb. `CELL_RFI` / `GATE_RFI` in nc4 are **pre–cloud/rain** Tb; only the increment added to **`TMBR_RFI`** uses the attenuation factor.
+1. **Sensor passband gate** — before running the gateway model, scripts test whether `gateway_center_freq_hz` lies in **`[center_freq ± bandwidth/2]`**. If not, all gateway RFI is zero and OOBE is not applied (top-5 text reports “out of channel passband”).
+2. **Direct link budget** — ITU P.676 and FSPL at **`gateway_center_freq_hz`** (default equals channel center). This is **not** the same as remapping from the assigned Starlink uplink band via separate `L_atm` ratios; OOBE is a scalar mask only.
+3. **OOBE mask** — `starlink_gateway_uplink_oobe_attenuation_db(sensor_center_freq_hz)` in `starlink_gateway_mdl.py`: assigned uplink band **51.4–52.4 GHz** (sensor center in that band → **A = 0**), **B_N = 1 GHz**, OOB **A = 40·log10(F/50+1)** dB for **F ≤ 200%** of **B_N** from nearest edge, else **60 dB**. Applied after direct RFI: **`rfi_power_dBW` − A**, **`rfi_Tb_K` × 10^(−A/10)**.
+
+**Note:** Changing EIRP, antenna count, or pattern strongly changes gateway CSV Tb and **`GATE_RFI`**. **`GATE_RFI`** in nc4 is **post-OOBE** and **pre–cloud/rain**; **`CELL_RFI`** is 5G-only and pre–cloud/rain. Only the increment added to **`TMBR_RFI`** applies cloud/rain attenuation (§9).
 
 ---
 
@@ -189,9 +198,9 @@ Passed as `slant_range_km` and `elevation_deg` into `model_rfi_nwp_5g_single_tim
 5. **5G antenna pattern** (`GROUND_EMITTER_*`): angular dependence of emitter gain.
 6. **Weather satellite antenna pattern** (V-band CSV and loading parameters): angular dependence of receiver gain.
 7. **Channel bandwidth**: scales brightness temperature Tb = P / (k_B * B); does not change RFI power in dBW.
-8. **Atmospheric parameters** (`TEMPERATURE_K`, `PRESSURE_PA`, `HUMIDITY_PCT`): P.676 path loss (5G and gateway chains).
-9. **Starlink gateway** (`EIRP_PER_GATEWAY_DBW`, `N_ANTENNAS_PER_GATEWAY`, `gateway_center_freq_hz_list`, gateway antenna constants): sets direct gateway Tb and power; **`starlink_gateway_uplink_oobe_attenuation_db`** then scales CSV / merged gateway Tb (5G unchanged).
-10. **Cloud/rain attenuation** (monthly `itu_iclw_rain_info_MM.nc`, `CLOUD_RAIN_ICLW_ABS_THRESHOLD`): scales the **summed** Tb increment into **`TMBR_RFI`**; does not rescale `CELL_RFI` / `GATE_RFI`.
+8. **Atmospheric parameters** (`TEMPERATURE_K`, `PRESSURE_PA`, `HUMIDITY_PCT`): P.676 at **2×fundamental** (5G) and at **`gateway_center_freq_hz`** (Starlink direct link).
+9. **Starlink gateway** (`EIRP_PER_GATEWAY_DBW`, `N_ANTENNAS_PER_GATEWAY`, `gateway_center_freq_hz_list`, gateway antenna constants): direct link Tb; **`starlink_gateway_uplink_oobe_attenuation_db`** then scales gateway CSV / **`GATE_RFI`** (5G unchanged).
+10. **Cloud/rain attenuation** (monthly `itu_iclw_rain_info_MM.nc`, `CLOUD_RAIN_ICLW_ABS_THRESHOLD`): scales the **summed** Tb increment into **`TMBR_RFI`** only; does not rescale **`CELL_RFI`** / **`GATE_RFI`** (see also `*_5G_Starlink_Gateway_Attenuation_top5.txt` for post–cloud/rain top-5 ranking).
 11. **SSMI-S geometry** (`SSMIS_SLANT_RANGE_KM`, `SSMIS_ELEVATION_DEG`): path length and elevation for SSMI-S only.
 
 ---
