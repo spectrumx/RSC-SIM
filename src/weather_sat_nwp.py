@@ -703,8 +703,9 @@ def model_rfi_nwp_5g_single_time(
     Vectorized RFI from 5G ground emitters only (one equivalent emitter per FOV).
 
     Applies to cross-track V-band sounders (e.g. ATMS, AMSU-A). Uses full ITU-R P.676
-    atmospheric absorption. 5G at emitter_fundamental_freq (e.g. 26 GHz); only 2nd
-    harmonic is in V-band 50–55.5 GHz. No Starlink, polarization loss, terrain, or OOBE.
+    atmospheric absorption on the uplink at the 2nd-harmonic frequency (fundamental
+    is out of band). 5G leakage modeled with -60 dBc at harmonic_freq =
+    2 * emitter_fundamental_freq. No Starlink, polarization loss, terrain, or OOBE.
     FOV size (and thus n_emitters) is set by sensor_name via SENSOR_BEAMWIDTH_DEG
     (e.g. ATMS 2.2°, AMSU-A 3.3°).
 
@@ -775,10 +776,15 @@ def model_rfi_nwp_5g_single_time(
     )
     effective_eirp_dbw = np.where(density <= 0, -np.inf, effective_eirp_dbw)
 
-    L_fs_fund = free_space_loss(distance, emitter_fundamental_freq)
-    L_atm_fund = calculate_comprehensive_atmospheric_loss_vectorized(
+    harmonic_freq = 2.0 * emitter_fundamental_freq
+    freq_min = freq_hz - bandwidth_hz / 2.0
+    freq_max = freq_hz + bandwidth_hz / 2.0
+    harmonic_in_band = freq_min <= harmonic_freq <= freq_max
+
+    L_fs_harm = free_space_loss(distance, harmonic_freq)
+    L_atm_harm = calculate_comprehensive_atmospheric_loss_vectorized(
         distance,
-        np.full(n, emitter_fundamental_freq),
+        np.full(n, harmonic_freq),
         elevation_angles=elevation_deg,
         temperature=temperature,
         pressure=pressure,
@@ -792,20 +798,13 @@ def model_rfi_nwp_5g_single_time(
     peak_emitter = emitter_antenna.get_boresight_gain()
     gain_emitter_rel = gain_emitter_abs / peak_emitter
 
-    base_lb_fund = (
-        gain_ws * (1.0 / L_fs_fund) * (1.0 / L_atm_fund) * gain_emitter_rel
-    )
-    harmonic_freq = 2.0 * emitter_fundamental_freq
-    freq_min = freq_hz - bandwidth_hz / 2.0
-    freq_max = freq_hz + bandwidth_hz / 2.0
-    harmonic_in_band = (freq_min <= harmonic_freq <= freq_max)
-    L_fs_harm = free_space_loss(distance, harmonic_freq)
-    path_loss_ratio = np.where(
-        L_fs_harm > 0, L_fs_fund / L_fs_harm, 0.0
-    )
     second_harmonic_factor = 1e-6  # 2nd harmonic: -60 dBc relative to fundamental
     link_budget = (
-        base_lb_fund * second_harmonic_factor * path_loss_ratio
+        gain_ws
+        * (1.0 / L_fs_harm)
+        * (1.0 / L_atm_harm)
+        * gain_emitter_rel
+        * second_harmonic_factor
         * (1.0 if harmonic_in_band else 0.0)
     )
 
@@ -840,8 +839,9 @@ def model_rfi_nwp_5g_single_time_ssmis(
     """
     Vectorized RFI from 5G ground emitters for SSMI-S (conical scanning).
 
-    Same link budget as model_rfi_nwp_5g_single_time (ITU-R P.676, 2nd harmonic -60 dBc)
-    but with constant slant range and elevation for all FOVs. n_emitters from fixed
+    Same link budget as model_rfi_nwp_5g_single_time (ITU-R P.676 at 2nd-harmonic
+    frequency, -60 dBc leakage) but with constant slant range and elevation for all
+    FOVs. n_emitters from fixed
     SSMI-S V-band FOV area (27 km x 18 km). Antenna gain direction (emitter_dec, emitter_caz)
     still varies by FOV for realistic pattern.
 
@@ -900,10 +900,15 @@ def model_rfi_nwp_5g_single_time_ssmis(
     )
     effective_eirp_dbw = np.where(density <= 0, -np.inf, effective_eirp_dbw)
 
-    L_fs_fund = free_space_loss(distance_m, emitter_fundamental_freq)
-    L_atm_fund = calculate_comprehensive_atmospheric_loss_vectorized(
+    harmonic_freq = 2.0 * emitter_fundamental_freq
+    freq_min = freq_hz - bandwidth_hz / 2.0
+    freq_max = freq_hz + bandwidth_hz / 2.0
+    harmonic_in_band = freq_min <= harmonic_freq <= freq_max
+
+    L_fs_harm = free_space_loss(distance_m, harmonic_freq)
+    L_atm_harm = calculate_comprehensive_atmospheric_loss_vectorized(
         distance_m,
-        np.full(n, emitter_fundamental_freq),
+        np.full(n, harmonic_freq),
         elevation_angles=elevation_deg_arr,
         temperature=temperature,
         pressure=pressure,
@@ -917,20 +922,13 @@ def model_rfi_nwp_5g_single_time_ssmis(
     peak_emitter = emitter_antenna.get_boresight_gain()
     gain_emitter_rel = gain_emitter_abs / peak_emitter
 
-    base_lb_fund = (
-        gain_ws * (1.0 / L_fs_fund) * (1.0 / L_atm_fund) * gain_emitter_rel
-    )
-    harmonic_freq = 2.0 * emitter_fundamental_freq
-    freq_min = freq_hz - bandwidth_hz / 2.0
-    freq_max = freq_hz + bandwidth_hz / 2.0
-    harmonic_in_band = (freq_min <= harmonic_freq <= freq_max)
-    L_fs_harm = free_space_loss(distance_m, harmonic_freq)
-    path_loss_ratio = np.where(
-        L_fs_harm > 0, L_fs_fund / L_fs_harm, 0.0
-    )
     second_harmonic_factor = 1e-6  # 2nd harmonic: -60 dBc relative to fundamental
     link_budget = (
-        base_lb_fund * second_harmonic_factor * path_loss_ratio
+        gain_ws
+        * (1.0 / L_fs_harm)
+        * (1.0 / L_atm_harm)
+        * gain_emitter_rel
+        * second_harmonic_factor
         * (1.0 if harmonic_in_band else 0.0)
     )
 
