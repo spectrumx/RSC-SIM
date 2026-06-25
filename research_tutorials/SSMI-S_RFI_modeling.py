@@ -57,6 +57,8 @@ from attenuation_mdl import (  # noqa: E402
     itu_iclw_rain_info_nc_path,
 )
 from starlink_gateway_mdl import (  # noqa: E402
+    DEFAULT_GATEWAY_ALTITUDE_M,
+    DEFAULT_GATEWAY_EIRP_REFERENCE_BANDWIDTH_HZ,
     apply_starlink_gateway_oobe_in_place,
     load_starlink_gateways,
     load_starlink_gateway_antenna_from_csv,
@@ -133,7 +135,9 @@ EIRP_PER_EMITTER_DBW = TRANSMIT_POWER_DBW + GROUND_EMITTER_GAIN_MAX
 # Starlink ground gateway
 EIRP_PER_GATEWAY_DBW = 70.5
 N_ANTENNAS_PER_GATEWAY = 40
-# Starlink gateway: default random boresight in starlink_gateway_mdl; legacy = bore sight at sat
+GATEWAY_EIRP_REFERENCE_BANDWIDTH_HZ = DEFAULT_GATEWAY_EIRP_REFERENCE_BANDWIDTH_HZ
+GATEWAY_ALTITUDE_M = DEFAULT_GATEWAY_ALTITUDE_M
+GATEWAY_PER_ANTENNA_BORESIGHT = True
 GATEWAY_BORESIGHT_POINTING = True
 GATEWAY_GAIN_MAX = 24.5
 GATEWAY_HORIZ_BW = 65.0
@@ -385,6 +389,10 @@ def run_rfi_for_channel_starlink_gateway(
     gateway_random_boresight: bool = True,
     gateway_boresight_pointing: bool = True,
     gateway_boresight_random_seed: Optional[int] = None,
+    gateway_per_antenna_boresight: bool = GATEWAY_PER_ANTENNA_BORESIGHT,
+    eirp_reference_bandwidth_hz: float = GATEWAY_EIRP_REFERENCE_BANDWIDTH_HZ,
+    gateway_altitude_m: float = GATEWAY_ALTITUDE_M,
+    profile_rfi: bool = False,
 ):
     """Starlink gateway RFI for one channel; OOBE vs. ``sensor_center_freq_hz``; CSV has constant ``saza``."""
     lat = data["lat"]
@@ -411,6 +419,8 @@ def run_rfi_for_channel_starlink_gateway(
         if in_fov_first
         else model_rfi_nwp_starlink_gateway_single_time
     )
+    t_model_s = 0.0
+    n_epoch_calls = 0
 
     for ts, sat, idx, coords in iter_valid_ts_sat_indices(
         timestamps, satellite, allowed, ecef_by_satellite
@@ -425,6 +435,7 @@ def run_rfi_for_channel_starlink_gateway(
         fov_saza_dummy = np.zeros(n_fov, dtype=np.float64)
         ellipse_az_deg = _ssmis_ellipse_azimuth_deg(fov_lat, fov_lon)
 
+        t0 = time_module.perf_counter() if profile_rfi else 0.0
         rfi_db, rfi_tb = _model(
             sat_ecef_km,
             fov_lat,
@@ -439,9 +450,12 @@ def run_rfi_for_channel_starlink_gateway(
             bandwidth_hz=bandwidth_hz,
             eirp_per_gateway_dbw=EIRP_PER_GATEWAY_DBW,
             n_antennas_per_gateway=N_ANTENNAS_PER_GATEWAY,
+            gateway_per_antenna_boresight=gateway_per_antenna_boresight,
             gateway_random_boresight=gateway_random_boresight,
             gateway_boresight_pointing=gateway_boresight_pointing,
             gateway_boresight_random_seed=gateway_boresight_random_seed,
+            eirp_reference_bandwidth_hz=eirp_reference_bandwidth_hz,
+            gateway_altitude_m=gateway_altitude_m,
             temperature=TEMPERATURE_K,
             pressure=PRESSURE_PA,
             humidity=HUMIDITY_PCT,
@@ -450,8 +464,17 @@ def run_rfi_for_channel_starlink_gateway(
             gateway_bbox_margin_deg=gateway_bbox_margin_deg,
             ellipse_azimuth_deg=ellipse_az_deg,
         )
+        if profile_rfi:
+            t_model_s += time_module.perf_counter() - t0
+            n_epoch_calls += 1
         rfi_dBW[idx_good] = rfi_db
         rfi_K[idx_good] = rfi_tb
+
+    if profile_rfi:
+        print(
+            f"  [profile] Starlink ch{channel_num}: model calls={n_epoch_calls}, "
+            f"model time={t_model_s:.2f} s"
+        )
 
     apply_starlink_gateway_oobe_in_place(rfi_dBW, rfi_K, sensor_center_freq_hz)
 
@@ -579,6 +602,22 @@ def main():
         metavar="SEED",
         help="Optional RNG seed for gateway random boresight.",
     )
+    parser.add_argument(
+        "--legacy_co_pointed_gateways",
+        action="store_true",
+        help=(
+            "Gateway: legacy co-pointed site (+10·log₁₀(N), one boresight per site). "
+            "Default is per-antenna independent boresight with incoherent tx sum."
+        ),
+    )
+    parser.add_argument(
+        "--profile_rfi",
+        action="store_true",
+        help=(
+            "Print Starlink gateway model timing per channel. "
+            "Also enabled when env RSCSIM_PROFILE_RFI=1."
+        ),
+    )
     args = parser.parse_args()
 
     if not os.path.isfile(args.nc4):
@@ -602,25 +641,19 @@ def main():
 
     data_dir = os.path.join(_script_dir, "data")
     v_band_csv = os.path.join(data_dir, "SSMI-S V-Band absolute antenna pattern.csv")
-    if not os.path.exists(v_band_csv):
-        print(f"WARNING: V-Band antenna CSV not found: {v_band_csv}")
-        print("  Using ITU fallback (SSMI-S antenna unknown; same as ATMS for now).")
-        from radio_types import Antenna  # noqa: E402
-        from astro_mdl import antenna_mdl_ITU  # noqa: E402
-        alphas = np.arange(0, 181, 1)
-        betas = np.arange(0, 360, 1)
-        gain_max = 50.0
-        half_beamwidth = 0.5
-        v_band_ant_df = antenna_mdl_ITU(gain_max, half_beamwidth, alphas, betas)
-        v_band_antenna = Antenna.from_dataframe(
-            v_band_ant_df, 0.99, (40e9, 60e9)
+    if not os.path.isfile(v_band_csv):
+        print(
+            f"ERROR: V-band antenna CSV required for beam-relative receive gain: {v_band_csv}"
         )
-    else:
-        v_band_antenna = load_weather_sat_antenna_from_csv(
-            v_band_csv,
-            eta_rad=0.99,
-            valid_freqs=(40e9, 60e9),
+        print(
+            "  Comment 2 path requires the symmetric V-band CSV (no ITU 2D fallback)."
         )
+        sys.exit(1)
+    v_band_antenna = load_weather_sat_antenna_from_csv(
+        v_band_csv,
+        eta_rad=0.99,
+        valid_freqs=(40e9, 60e9),
+    )
 
     emitter_antenna = create_5g_sector_antenna_pattern(
         gain_max=GROUND_EMITTER_GAIN_MAX,
@@ -673,12 +706,25 @@ def main():
     in_fov_first = not args.attenuation_first
     gw_random = not args.legacy_gateway_boresight_at_satellite
     gw_bore_pt = True
+    gw_per_antenna = not args.legacy_co_pointed_gateways
+    profile_rfi = args.profile_rfi or os.environ.get(
+        "RSCSIM_PROFILE_RFI", ""
+    ).strip().lower() in ("1", "true", "yes")
     print(
         "  Starlink gateway link order: "
         + (
             "in-FOV first (then ITU-R for gateways in a footprint)"
             if in_fov_first
             else "attenuation first (original)"
+        )
+    )
+    print(
+        "  Starlink gateway tx: "
+        + (
+            f"per-antenna boresight (N={N_ANTENNAS_PER_GATEWAY}, "
+            f"B_ref={GATEWAY_EIRP_REFERENCE_BANDWIDTH_HZ/1e6:.0f} MHz)"
+            if gw_per_antenna
+            else f"legacy co-pointed (+10·log₁₀({N_ANTENNAS_PER_GATEWAY}))"
         )
     )
     print(
@@ -837,6 +883,9 @@ def main():
                     gateway_random_boresight=gw_random,
                     gateway_boresight_pointing=gw_bore_pt,
                     gateway_boresight_random_seed=args.gateway_boresight_random_seed,
+                    gateway_per_antenna_boresight=gw_per_antenna,
+                    eirp_reference_bandwidth_hz=GATEWAY_EIRP_REFERENCE_BANDWIDTH_HZ,
+                    profile_rfi=profile_rfi,
                 )
                 oobe_db = starlink_gateway_uplink_oobe_attenuation_db(ssmis_center_freq_hz)
                 gw_computed = True

@@ -140,15 +140,24 @@ Gaseous absorption uses **`calculate_comprehensive_atmospheric_loss_vectorized`*
 
 ## 8. Starlink ground gateway (high impact when gateways fall in beam)
 
-Fixed gateway sites: **direct uplink link budget**, then **regulatory OOBE mask** vs. sensor channel center. Gateway list: CLI **`--gateways_csv`** (default `research_tutorials/data/starlink_gateways_geolocations.csv`). Optional CLI **`--attenuation_first`** selects the legacy Starlink compute order (same physics; default is in-FOV-first). Per-sensor script constants (names aligned across ATMS / AMSU-A / SSMI-S):
+Fixed gateway sites: **direct uplink link budget**, then **regulatory OOBE mask** vs. sensor channel center. Gateway list: CLI **`--gateways_csv`** (default `research_tutorials/data/starlink_gateways_geolocations.csv`). Optional CLI **`--attenuation_first`** selects the legacy Starlink compute order (same physics; default is in-FOV-first). Optional **`--legacy_co_pointed_gateways`** restores pre-fix co-pointed transmit (+10·log₁₀(N)); default is per-antenna boresight with incoherent tx sum. Optional **`--profile_rfi`** (or env **`RSCSIM_PROFILE_RFI=1`**) prints gateway model timing per channel. Per-sensor script constants (names aligned across ATMS / AMSU-A / SSMI-S):
 
 | Variable name | Location | Unit | Description |
 |---------------|----------|------|-------------|
-| `EIRP_PER_GATEWAY_DBW` | Each sensor script | dBW | Aggregate EIRP reference per gateway (default 70.5 dBW). |
-| `N_ANTENNAS_PER_GATEWAY` | Each sensor script | count | Antennas per site; scales gateway contribution in the model. Default 40 |
+| `EIRP_PER_GATEWAY_DBW` | Each sensor script | dBW | **Per-antenna** EIRP at boresight, referenced to `GATEWAY_EIRP_REFERENCE_BANDWIDTH_HZ` (default 70.5 dBW). |
+| `N_ANTENNAS_PER_GATEWAY` | Each sensor script | count | Antennas per site (default 40). Incoherent sum over antennas when `GATEWAY_PER_ANTENNA_BORESIGHT=True`. |
+| `GATEWAY_EIRP_REFERENCE_BANDWIDTH_HZ` | Each sensor script | Hz | EIRP reference bandwidth **B_ref** (default **400 MHz**). Received power scaled by `B_rx / B_ref` before Tb; distinct from OOBE `B_N` (1 GHz). |
+| `GATEWAY_PER_ANTENNA_BORESIGHT` | Each sensor script | bool | Default **True**: independent boresight per antenna. Set False (or CLI `--legacy_co_pointed_gateways`) for co-pointed legacy. |
+| `GATEWAY_ALTITUDE_M` | Each sensor script | m | Gateway site altitude above WGS84 (default **2.5 m**, effective radiating height under radome). Distinct from **15 m** NWP ground target used for 5G emitters and FOV receive boresight. |
 | `gateway_center_freq_hz_list` | Each sensor script | Hz | Frequency **`freq_hz`** for gateway FSPL and ITU-R P.676 (default: **sensor channel center**). |
-| `GATEWAY_GAIN_MAX`, `GATEWAY_HORIZ_BW`, `GATEWAY_VERT_BW`, `GATEWAY_ETA_RAD` | Each sensor script | dBi, deg, deg, — | Gateway sector pattern (same family as 5G sector builder). |
-| `GATEWAY_BORESIGHT_POINTING` | Each sensor script | bool | Boresight / random-boresight behavior (see script + `starlink_gateway_mdl`). |
+| `GATEWAY_GAIN_MAX`, `GATEWAY_HORIZ_BW`, `GATEWAY_VERT_BW`, `GATEWAY_ETA_RAD` | Each sensor script | dBi, deg, deg, — | Gateway sector pattern (fallback if gateway CSV missing). |
+| `GATEWAY_BORESIGHT_POINTING` | Each sensor script | bool | Used when random boresight disabled via **`--legacy_gateway_boresight_at_satellite`**. |
+
+**Receive gain (Comment 2):** beam-relative pattern using symmetric **V-band CSV** (required; scripts exit with clear error if missing — no ITU 2D fallback). Boresight = satellite → FOV center at **15 m** ground altitude.
+
+**Transmit gain (Comment 1):** default per-antenna random boresight; incoherent linear sum; no `+10·log₁₀(N)` unless legacy co-pointed mode.
+
+**Bandwidth (Comment 3):** after link budget, `rfi_power_w *= bandwidth_hz / GATEWAY_EIRP_REFERENCE_BANDWIDTH_HZ` **before** OOBE and Tb conversion.
 
 **Three frequency-related checks (do not confuse them):**
 

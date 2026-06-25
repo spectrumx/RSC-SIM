@@ -84,7 +84,7 @@ After a successful run, the sensor directory typically gains (names depend on ch
 
 ## 3. Running RFI scripts (single nc4)
 
-Run from **`research_tutorials/`**. Arguments: `--sensor` (required), `--nc4` (required), `--out_dir` (optional; default is the nc4 directory), **`--gateways_csv`** (optional; default `data/starlink_gateways_geolocations.csv`), **`--attenuation_first`** (optional; Starlink only — if set, runs the legacy “attenuation before in-FOV” gateway path for speed comparison; default is in-FOV-first, same physics). ECEF lookups load from the same folder as the nc4 (`*_ECEF_lookup_{stem}.csv`).
+Run from **`research_tutorials/`**. Arguments: `--sensor` (required), `--nc4` (required), `--out_dir` (optional; default is the nc4 directory), **`--gateways_csv`** (optional; default `data/starlink_gateways_geolocations.csv`), **`--attenuation_first`** (optional; Starlink only — legacy compute order; default is in-FOV-first, same physics). Optional Starlink-only flags: **`--legacy_co_pointed_gateways`** (A/B vs pre-fix co-pointed tx), **`--profile_rfi`** (or env `RSCSIM_PROFILE_RFI=1`). V-band antenna CSV is **required** (no ITU fallback). ECEF lookups load from the same folder as the nc4 (`*_ECEF_lookup_{stem}.csv`).
 An example command is provided at each RFI modeling script (e.g., `ATMS_RFI_modeling.py` etc.)
 
 ### ATMS (SUOMI-NPP, JPSS-1; SAID 224, 225)
