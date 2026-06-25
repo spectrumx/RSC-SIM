@@ -5,6 +5,9 @@ for numerical Weather Prediction (NWP) simulation
 This module provides additional functions for numerical Weather Prediction (NWP) simulation, including:
 - Number of emitters per square km based on [lat, lon] coordinates
 - Elliptical FOV ground emitter distribution for 5G mmWave small cells
+- Beam-relative receive-gain geometry helpers (``unit_vectors_sat_to_targets_ecef``,
+  ``off_boresight_angle_rad``, ``weather_sat_receive_gain_beam_relative``,
+  ``weather_sat_boresight_gain``)
 - Vectorized RFI observation model for cross-track V-band sounders (ATMS, AMSU-A) with 5G ground emitters only.
 - SSMI-S (conical scanning): FOV bearing, fixed V-band area, and emitter count helpers.
 """
@@ -231,19 +234,10 @@ def get_emitter_density(lat_lon: list, *, supported_5g_countries: dict[str, str]
     country_name = supported_5g_countries[country_code]
     if population > 10000:
         terrain_type = 'Ultra-dense urban'
-        emitter_density_per_km2 = 30.0
-    elif population > 5000:
-        terrain_type = 'Dense urban'
         emitter_density_per_km2 = 15.0
-    elif population > 1500:
-        terrain_type = 'Urban'
-        emitter_density_per_km2 = 5.0
-    elif population > 300:
-        terrain_type = 'Suburban'
-        emitter_density_per_km2 = 3.0
     else:
-        terrain_type = 'Open/Rural'
-        emitter_density_per_km2 = 1.0
+        terrain_type = 'below ultra-dense urban threshold'
+        emitter_density_per_km2 = 0.0
 
     print(f"[{lat:7.4f}, {lon:8.4f}] -> Country: '{country_name}', "
           f"Population: {population:7.0f}, Terrain: '{terrain_type}', Density: {emitter_density_per_km2}")
@@ -387,14 +381,8 @@ def _population_to_density(
     if population <= 0 or country_code not in supported_5g_countries:
         return 0.0
     if population > 10000:
-        return 30.0
-    if population > 5000:
         return 15.0
-    if population > 1500:
-        return 5.0
-    if population > 300:
-        return 3.0
-    return 1.0
+    return 0.0
 
 
 def get_emitter_density_vectorized(
@@ -696,6 +684,105 @@ def timestamp_from_nc4_vars(
     return np.array(out)
 
 
+# Ground target altitude (m) for FOV-center ECEF and 5G emitters in NWP RFI link budgets.
+NWP_GROUND_TARGET_ALTITUDE_M = 15.0
+
+_MIN_DIRECTION_NORM_M = 1e-6
+
+
+def _normalize_unit_vectors_3d(vectors: np.ndarray) -> np.ndarray:
+    """Row-wise unit normalization for (N, 3) direction vectors; zero rows stay zero."""
+    vec = np.asarray(vectors, dtype=np.float64)
+    if vec.ndim == 1:
+        vec = vec.reshape(1, 3)
+    norms = np.linalg.norm(vec, axis=1, keepdims=True)
+    valid = norms >= _MIN_DIRECTION_NORM_M
+    safe_norms = np.where(valid, norms, 1.0)
+    out = vec / safe_norms
+    return np.where(valid, out, 0.0)
+
+
+def unit_vectors_sat_to_targets_ecef(
+    sat_ecef_m: np.ndarray,
+    target_ecef_m: np.ndarray,
+) -> np.ndarray:
+    """
+    Unit vectors from satellite to each target in ECEF (m).
+
+    Args:
+        sat_ecef_m: Satellite position (3,) in meters.
+        target_ecef_m: Target positions (N, 3) in meters.
+
+    Returns:
+        (N, 3) unit vectors ``u = (target - sat) / |target - sat|``.
+    """
+    sat = np.asarray(sat_ecef_m, dtype=np.float64).reshape(3)
+    tgt = np.asarray(target_ecef_m, dtype=np.float64)
+    if tgt.ndim == 1:
+        tgt = tgt.reshape(1, 3)
+    diff = tgt - sat[np.newaxis, :]
+    return _normalize_unit_vectors_3d(diff)
+
+
+def off_boresight_angle_rad(
+    u_boresight: np.ndarray,
+    u_target: np.ndarray,
+) -> np.ndarray:
+    """
+    Off-boresight angle (rad) between beam directions and target directions.
+
+    Uses ``einsum`` over normalized unit vectors:
+    ``cos(theta) = clip(sum_k u_bore[i,k] * u_tgt[j,k], -1, 1)``.
+
+    Args:
+        u_boresight: (n_fov, 3) or (3,) unit vectors (beam boresight per FOV).
+        u_target: (n_tgt, 3) or (3,) unit vectors (e.g. gateways).
+
+    Returns:
+        (n_fov, n_tgt) angles in radians.
+    """
+    u_bore = _normalize_unit_vectors_3d(u_boresight)
+    u_tgt = _normalize_unit_vectors_3d(u_target)
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        cos_theta = np.einsum("ik,jk->ij", u_bore, u_tgt, optimize=True)
+    cos_theta = np.clip(cos_theta, -1.0, 1.0)
+    return np.arccos(cos_theta)
+
+
+def weather_sat_receive_gain_beam_relative(
+    weather_sat_antenna,
+    theta_rad: np.ndarray,
+) -> np.ndarray:
+    """
+    Weather-sat receive gain (linear) vs. off-boresight angle (symmetric V-band CSV).
+
+    ``theta_rad`` is the angle between beam boresight (sat → FOV center) and sat →
+    target. For azimuthally symmetric patterns from ``load_weather_sat_antenna_from_csv``,
+    azimuth is fixed at 0 rad.
+
+    Args:
+        weather_sat_antenna: ``Antenna`` with ``get_gain_values`` (alphas, betas in rad).
+        theta_rad: Off-boresight angles (rad); any broadcastable shape.
+
+    Returns:
+        Linear gain, same shape as broadcast ``theta_rad``.
+    """
+    theta_rad = np.asarray(theta_rad, dtype=np.float64)
+    beta_zero = np.zeros_like(theta_rad, dtype=np.float64)
+    return weather_sat_antenna.get_gain_values(theta_rad, beta_zero)
+
+
+def weather_sat_boresight_gain(weather_sat_antenna) -> float:
+    """
+    Peak linear receive gain (boresight) for a weather-sat ``Antenna``.
+
+    Used when the interference source lies on the beam boresight (e.g. 5G emitter
+    placed at the FOV center).
+    """
+    alpha0, beta0 = weather_sat_antenna.get_boresight_point()
+    return float(weather_sat_antenna.get_gain_value(alpha0, beta0))
+
+
 def model_rfi_nwp_5g_single_time(
     sat_ecef_km: np.ndarray,
     fov_lat: np.ndarray,
@@ -718,8 +805,9 @@ def model_rfi_nwp_5g_single_time(
     Vectorized RFI from 5G ground emitters only (one equivalent emitter per FOV).
 
     Applies to cross-track V-band sounders (e.g. ATMS, AMSU-A). Uses full ITU-R P.676
-    atmospheric absorption. 5G at emitter_fundamental_freq (e.g. 26 GHz); only 2nd
-    harmonic is in V-band 50–55.5 GHz. No Starlink, polarization loss, terrain, or OOBE.
+    atmospheric absorption on the uplink at the 2nd-harmonic frequency (fundamental
+    is out of band). 5G leakage modeled with -60 dBc at harmonic_freq =
+    2 * emitter_fundamental_freq. No Starlink, polarization loss, terrain, or OOBE.
     FOV size (and thus n_emitters) is set by sensor_name via SENSOR_BEAMWIDTH_DEG
     (e.g. ATMS 2.2°, AMSU-A 3.3°).
 
@@ -770,7 +858,7 @@ def model_rfi_nwp_5g_single_time(
     sat_ecef_m = sat_ecef_m.reshape(3)
 
     emitter_ecef = latlonalt_to_ecef_vectorized(
-        fov_lat, fov_lon, np.full(n, 15.0)
+        fov_lat, fov_lon, np.full(n, NWP_GROUND_TARGET_ALTITUDE_M)
     )
     ws_ecef = np.broadcast_to(sat_ecef_m[np.newaxis, :], (n, 3))
     ws_vel = np.zeros((n, 3))
@@ -790,37 +878,36 @@ def model_rfi_nwp_5g_single_time(
     )
     effective_eirp_dbw = np.where(density <= 0, -np.inf, effective_eirp_dbw)
 
-    L_fs_fund = free_space_loss(distance, emitter_fundamental_freq)
-    L_atm_fund = calculate_comprehensive_atmospheric_loss_vectorized(
+    harmonic_freq = 2.0 * emitter_fundamental_freq
+    freq_min = freq_hz - bandwidth_hz / 2.0
+    freq_max = freq_hz + bandwidth_hz / 2.0
+    harmonic_in_band = freq_min <= harmonic_freq <= freq_max
+
+    L_fs_harm = free_space_loss(distance, harmonic_freq)
+    L_atm_harm = calculate_comprehensive_atmospheric_loss_vectorized(
         distance,
-        np.full(n, emitter_fundamental_freq),
+        np.full(n, harmonic_freq),
         elevation_angles=elevation_deg,
         temperature=temperature,
         pressure=pressure,
         humidity=humidity,
         use_full_itu_p676=True,
     )
-    gain_ws = weather_sat_antenna.get_gain_values(emitter_dec, emitter_caz)
+    # Emitter at FOV center → receive gain at beam boresight (not nadir-frame dec/caz).
+    gain_ws = np.full(n, weather_sat_boresight_gain(weather_sat_antenna), dtype=np.float64)
     # Emitter: eirp_per_emitter_dbw is EIRP at boresight (already P_tx + G_tx_max).
     # gain_emitter_rel = pattern in direction of satellite (0..1), not gain again—no double-count.
     gain_emitter_abs = emitter_antenna.get_gain_values(emitter_dec, emitter_caz)
     peak_emitter = emitter_antenna.get_boresight_gain()
     gain_emitter_rel = gain_emitter_abs / peak_emitter
 
-    base_lb_fund = (
-        gain_ws * (1.0 / L_fs_fund) * (1.0 / L_atm_fund) * gain_emitter_rel
-    )
-    harmonic_freq = 2.0 * emitter_fundamental_freq
-    freq_min = freq_hz - bandwidth_hz / 2.0
-    freq_max = freq_hz + bandwidth_hz / 2.0
-    harmonic_in_band = (freq_min <= harmonic_freq <= freq_max)
-    L_fs_harm = free_space_loss(distance, harmonic_freq)
-    path_loss_ratio = np.where(
-        L_fs_harm > 0, L_fs_fund / L_fs_harm, 0.0
-    )
     second_harmonic_factor = 1e-6  # 2nd harmonic: -60 dBc relative to fundamental
     link_budget = (
-        base_lb_fund * second_harmonic_factor * path_loss_ratio
+        gain_ws
+        * (1.0 / L_fs_harm)
+        * (1.0 / L_atm_harm)
+        * gain_emitter_rel
+        * second_harmonic_factor
         * (1.0 if harmonic_in_band else 0.0)
     )
 
@@ -855,8 +942,9 @@ def model_rfi_nwp_5g_single_time_ssmis(
     """
     Vectorized RFI from 5G ground emitters for SSMI-S (conical scanning).
 
-    Same link budget as model_rfi_nwp_5g_single_time (ITU-R P.676, 2nd harmonic -60 dBc)
-    but with constant slant range and elevation for all FOVs. n_emitters from fixed
+    Same link budget as model_rfi_nwp_5g_single_time (ITU-R P.676 at 2nd-harmonic
+    frequency, -60 dBc leakage) but with constant slant range and elevation for all
+    FOVs. n_emitters from fixed
     SSMI-S V-band FOV area (27 km x 18 km). Antenna gain direction (emitter_dec, emitter_caz)
     still varies by FOV for realistic pattern.
 
@@ -898,7 +986,7 @@ def model_rfi_nwp_5g_single_time_ssmis(
     sat_ecef_m = sat_ecef_m.reshape(3)
 
     emitter_ecef = latlonalt_to_ecef_vectorized(
-        fov_lat, fov_lon, np.full(n, 15.0)
+        fov_lat, fov_lon, np.full(n, NWP_GROUND_TARGET_ALTITUDE_M)
     )
     ws_ecef = np.broadcast_to(sat_ecef_m[np.newaxis, :], (n, 3))
     ws_vel = np.zeros((n, 3))
@@ -915,37 +1003,36 @@ def model_rfi_nwp_5g_single_time_ssmis(
     )
     effective_eirp_dbw = np.where(density <= 0, -np.inf, effective_eirp_dbw)
 
-    L_fs_fund = free_space_loss(distance_m, emitter_fundamental_freq)
-    L_atm_fund = calculate_comprehensive_atmospheric_loss_vectorized(
+    harmonic_freq = 2.0 * emitter_fundamental_freq
+    freq_min = freq_hz - bandwidth_hz / 2.0
+    freq_max = freq_hz + bandwidth_hz / 2.0
+    harmonic_in_band = freq_min <= harmonic_freq <= freq_max
+
+    L_fs_harm = free_space_loss(distance_m, harmonic_freq)
+    L_atm_harm = calculate_comprehensive_atmospheric_loss_vectorized(
         distance_m,
-        np.full(n, emitter_fundamental_freq),
+        np.full(n, harmonic_freq),
         elevation_angles=elevation_deg_arr,
         temperature=temperature,
         pressure=pressure,
         humidity=humidity,
         use_full_itu_p676=True,
     )
-    gain_ws = weather_sat_antenna.get_gain_values(emitter_dec, emitter_caz)
+    # Emitter at FOV center → receive gain at beam boresight (not nadir-frame dec/caz).
+    gain_ws = np.full(n, weather_sat_boresight_gain(weather_sat_antenna), dtype=np.float64)
     # Emitter: eirp_per_emitter_dbw is EIRP at boresight (already P_tx + G_tx_max).
     # gain_emitter_rel = pattern in direction of satellite (0..1), not gain again—no double-count.
     gain_emitter_abs = emitter_antenna.get_gain_values(emitter_dec, emitter_caz)
     peak_emitter = emitter_antenna.get_boresight_gain()
     gain_emitter_rel = gain_emitter_abs / peak_emitter
 
-    base_lb_fund = (
-        gain_ws * (1.0 / L_fs_fund) * (1.0 / L_atm_fund) * gain_emitter_rel
-    )
-    harmonic_freq = 2.0 * emitter_fundamental_freq
-    freq_min = freq_hz - bandwidth_hz / 2.0
-    freq_max = freq_hz + bandwidth_hz / 2.0
-    harmonic_in_band = (freq_min <= harmonic_freq <= freq_max)
-    L_fs_harm = free_space_loss(distance_m, harmonic_freq)
-    path_loss_ratio = np.where(
-        L_fs_harm > 0, L_fs_fund / L_fs_harm, 0.0
-    )
     second_harmonic_factor = 1e-6  # 2nd harmonic: -60 dBc relative to fundamental
     link_budget = (
-        base_lb_fund * second_harmonic_factor * path_loss_ratio
+        gain_ws
+        * (1.0 / L_fs_harm)
+        * (1.0 / L_atm_harm)
+        * gain_emitter_rel
+        * second_harmonic_factor
         * (1.0 if harmonic_in_band else 0.0)
     )
 
