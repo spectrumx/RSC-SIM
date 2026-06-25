@@ -3,7 +3,8 @@ Cached Phase-2 loaders and RFI time-series computation for the Weather FOV tab.
 
 Starlink RFI uses ``model_weather_sat_observed_power_phase2`` (full ECEF path).
 5G RFI uses equivalent-emitter scaling at the FOV center (NWP Section 5 idea)
-with phase2 ``ground_emitter_to_weather_sat_link_budget`` harmonics.
+with phase2 ``ground_emitter_to_weather_sat_link_budget`` harmonics and
+beam-relative weather-sat receive gain (FOV center boresight).
 """
 
 from __future__ import annotations
@@ -387,6 +388,8 @@ def _equivalent_5g_rfi_dbw_series(
     emitter_ecef = latlonalt_to_ecef(
         TARGET_LAT, TARGET_LON, TARGET_ALT + EMITTER_TOWER_ALT_M
     )
+    # Beam boresight = FOV center (same lat/lon/alt as equivalent emitter).
+    boresight_target_ecef = emitter_ecef
 
     ws_ecef_pos, _ = compute_weather_sat_ecef_from_trajectory(
         traj, OBSERVER_LAT, OBSERVER_LON, OBSERVER_ALT
@@ -401,6 +404,7 @@ def _equivalent_5g_rfi_dbw_series(
         link_budget = ground_emitter_to_weather_sat_link_budget(
             emitter_ecef,
             ws_ecef,
+            boresight_target_ecef,
             ws_antenna,
             emitter_ant,
             freq_hz,
