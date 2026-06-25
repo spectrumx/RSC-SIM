@@ -4,6 +4,7 @@ Weather Satellite Modeling Functions for "Looking Down" RFI Analysis
 This module provides functions for modeling RFI from the perspective of a weather
 satellite (e.g., Suomi-NPP) looking down at Earth, including:
 - Coordinate transformations to weather satellite frame
+- Beam-relative weather-sat receive gain (FOV boresight vs nadir-frame dec/caz)
 - Weather satellite antenna pattern loading from CSV
 - Link budget calculations for Starlink backlobe interference
 - Observation modeling for weather satellite scenarios
@@ -294,6 +295,42 @@ def latlonalt_to_ecef_vectorized(lats: np.ndarray, lons: np.ndarray, alts: np.nd
     return np.column_stack([x, y, z])
 
 
+def weather_sat_receive_gain_toward_ecef_beam_relative(
+    weather_sat_antenna,
+    sat_ecef_m: np.ndarray,
+    boresight_target_ecef_m: np.ndarray,
+    source_ecef_m: np.ndarray,
+) -> np.ndarray:
+    """
+    Weather-sat receive gain (linear) vs beam boresight (sat→FOV center) and sat→source.
+
+    Uses symmetric V-band pattern lookup by off-boresight angle (Comment 2), not
+    nadir-frame ``dec/caz``.
+    """
+    from weather_sat_nwp import (
+        off_boresight_angle_rad,
+        unit_vectors_sat_to_targets_ecef,
+        weather_sat_receive_gain_beam_relative,
+    )
+
+    sat = np.asarray(sat_ecef_m, dtype=np.float64).reshape(3)
+    bore = np.asarray(boresight_target_ecef_m, dtype=np.float64).reshape(1, 3)
+    src = np.asarray(source_ecef_m, dtype=np.float64)
+    if src.ndim == 1:
+        src = src.reshape(1, 3)
+    u_bore = unit_vectors_sat_to_targets_ecef(sat, bore)
+    u_src = unit_vectors_sat_to_targets_ecef(sat, src)
+    theta = off_boresight_angle_rad(u_bore, u_src).ravel()
+    return weather_sat_receive_gain_beam_relative(weather_sat_antenna, theta)
+
+
+def weather_sat_receive_gain_at_boresight(weather_sat_antenna) -> float:
+    """Peak linear receive gain at beam boresight (FOV / resolution-element center)."""
+    from weather_sat_nwp import weather_sat_boresight_gain
+
+    return weather_sat_boresight_gain(weather_sat_antenna)
+
+
 # =============================================================================
 # Weather Satellite Antenna Pattern Loading
 # =============================================================================
@@ -513,13 +550,14 @@ def calculate_starlink_harmonic_contribution_vectorized(
 # =============================================================================
 
 def starlink_backlobe_to_weather_sat_link_budget(
-    weather_sat_dec: float,
-    weather_sat_caz: float,
     weather_sat_antenna: Antenna,
+    starlink_antenna: Antenna,
+    sat_ecef_m: np.ndarray,
+    boresight_target_ecef_m: np.ndarray,
+    starlink_ecef_m: np.ndarray,
     starlink_dec: float,
     starlink_caz: float,
     starlink_distance: float,
-    starlink_antenna: Antenna,
     freq: float,
     polarization_loss_factor: float = 0.5,
     starlink_fundamental_freq: float = None,
@@ -530,13 +568,14 @@ def starlink_backlobe_to_weather_sat_link_budget(
     Calculate link budget for Starlink backlobe interference to weather satellite.
 
     Args:
-        weather_sat_dec: Weather satellite pointing declination (nadir = 0)
-        weather_sat_caz: Weather satellite pointing counter-azimuth
         weather_sat_antenna: Weather satellite antenna object
-        starlink_dec: Starlink position declination in weather sat frame
-        starlink_caz: Starlink position counter-azimuth in weather sat frame
-        starlink_distance: Distance from weather sat to Starlink (meters)
         starlink_antenna: Starlink antenna object (backlobe pattern)
+        sat_ecef_m: Weather satellite ECEF position (m)
+        boresight_target_ecef_m: FOV center ECEF (beam boresight ground point, m)
+        starlink_ecef_m: Starlink ECEF position (m)
+        starlink_dec: Starlink position declination in weather sat frame (Starlink tx)
+        starlink_caz: Starlink position counter-azimuth in weather sat frame (Starlink tx)
+        starlink_distance: Distance from weather sat to Starlink (meters)
         freq: Frequency in Hz
         polarization_loss_factor: Polarization mismatch loss factor (linear, 0-1).
             Default 0.5 = -3 dB for circular (Starlink) to linear (Suomi-NPP) mismatch.
@@ -550,10 +589,14 @@ def starlink_backlobe_to_weather_sat_link_budget(
     Returns:
         float: Total link budget including harmonics (dimensionless)
     """
-    # Weather satellite receive gain (main lobe looking at Earth)
-    # Weather satellite is pointing at nadir (dec=0, caz=0 typically)
-    # But we need gain in direction of Starlink
-    gain_weather_sat = weather_sat_antenna.get_gain_value(starlink_dec, starlink_caz)
+    gain_weather_sat = float(
+        weather_sat_receive_gain_toward_ecef_beam_relative(
+            weather_sat_antenna,
+            sat_ecef_m,
+            boresight_target_ecef_m,
+            starlink_ecef_m,
+        )[0]
+    )
 
     # Starlink backlobe gain (toward weather satellite)
     # For backlobe, we need to find the angle from Starlink's boresight
@@ -615,13 +658,14 @@ def starlink_backlobe_to_weather_sat_link_budget(
 
 
 def starlink_backlobe_to_weather_sat_link_budget_vectorized(
-    weather_sat_dec: np.ndarray,
-    weather_sat_caz: np.ndarray,
     weather_sat_antenna: Antenna,
+    starlink_antenna: Antenna,
+    sat_ecef_m: np.ndarray,
+    boresight_target_ecef_m: np.ndarray,
+    starlink_ecef_m: np.ndarray,
     starlink_dec: np.ndarray,
     starlink_caz: np.ndarray,
     starlink_distance: np.ndarray,
-    starlink_antenna: Antenna,
     freq: float,
     polarization_loss_factor: float = 0.5,
     starlink_fundamental_freq: float = None,
@@ -632,13 +676,14 @@ def starlink_backlobe_to_weather_sat_link_budget_vectorized(
     Vectorized version of starlink_backlobe_to_weather_sat_link_budget.
 
     Args:
-        weather_sat_dec: Weather satellite pointing declination array
-        weather_sat_caz: Weather satellite pointing counter-azimuth array
         weather_sat_antenna: Weather satellite antenna object
+        starlink_antenna: Starlink antenna object
+        sat_ecef_m: Weather satellite ECEF (3,) or broadcastable
+        boresight_target_ecef_m: FOV center ECEF (3,) or broadcastable
+        starlink_ecef_m: Starlink ECEF positions (N, 3)
         starlink_dec: Starlink positions declination in weather sat frame
         starlink_caz: Starlink positions counter-azimuth in weather sat frame
         starlink_distance: Distances from weather sat to Starlink (meters)
-        starlink_antenna: Starlink antenna object
         freq: Frequency in Hz
         polarization_loss_factor: Polarization mismatch loss factor (linear, 0-1).
             Default 0.5 = -3 dB for circular (Starlink) to linear (Suomi-NPP) mismatch.
@@ -651,13 +696,16 @@ def starlink_backlobe_to_weather_sat_link_budget_vectorized(
     Returns:
         np.ndarray: Total link budget array including harmonics (dimensionless)
     """
-    # Broadcast arrays
     starlink_dec = np.asarray(starlink_dec)
     starlink_caz = np.asarray(starlink_caz)
     starlink_distance = np.asarray(starlink_distance)
 
-    # Weather satellite gain (vectorized)
-    gain_weather_sat = weather_sat_antenna.get_gain_values(starlink_dec, starlink_caz)
+    gain_weather_sat = weather_sat_receive_gain_toward_ecef_beam_relative(
+        weather_sat_antenna,
+        sat_ecef_m,
+        boresight_target_ecef_m,
+        starlink_ecef_m,
+    )
 
     # Starlink backlobe gain
     starlink_to_weather_dec = np.pi - starlink_dec
@@ -982,15 +1030,6 @@ def model_weather_sat_observed_power(
             ws_ecef = ws_ecef_pos[ws_mask].iloc[0][['x', 'y', 'z']].values
             ws_vel = ws_ecef_vel[ws_mask].iloc[0][['vx', 'vy', 'vz']].values
 
-        # Transform target to weather satellite frame
-        target_dec, target_caz = ecef_to_weather_sat_frame(
-            target_ecef[np.newaxis, :],
-            ws_ecef[np.newaxis, :],
-            ws_vel[np.newaxis, :]
-        )
-        target_dec = target_dec[0]
-        target_caz = target_caz[0]
-
         # Find Starlink satellites at this time
         starlink_sats = starlink_traj_df[
             starlink_traj_df['times'] == obs_time
@@ -1053,11 +1092,14 @@ def model_weather_sat_observed_power(
 
                     # Calculate link budget (includes polarization mismatch loss and harmonics)
                     link_budget = starlink_backlobe_to_weather_sat_link_budget(
-                        0.0, 0.0,  # Weather sat pointing at nadir
                         weather_sat_antenna,
-                        sat_dec, sat_caz,
-                        sat_to_ws_dist,
                         starlink_antenna,
+                        ws_ecef,
+                        target_ecef,
+                        sat_ecef,
+                        sat_dec,
+                        sat_caz,
+                        sat_to_ws_dist,
                         freq,
                         polarization_loss_factor=polarization_loss_factor,
                         starlink_fundamental_freq=starlink_fundamental_freq,
@@ -1079,7 +1121,7 @@ def model_weather_sat_observed_power(
             # Earth brightness (through main lobe pointing at target)
             # Use frequency-dependent brightness temperature to account for atmospheric effects
             earth_temp_freq = calculate_earth_brightness_temperature(freq, earth_brightness_temp)
-            earth_gain = weather_sat_antenna.get_gain_value(target_dec, target_caz)
+            earth_gain = weather_sat_receive_gain_at_boresight(weather_sat_antenna)
             earth_power = temperature_to_power(earth_temp_freq, bandwidth) * earth_gain
 
             # Sky background (through sidelobes - use average gain)
@@ -1867,6 +1909,7 @@ def calculate_ground_emitter_oobe_contribution(
 def ground_emitter_to_weather_sat_link_budget(
     emitter_ecef: np.ndarray,
     weather_sat_ecef: np.ndarray,
+    boresight_target_ecef: np.ndarray,
     weather_sat_antenna: Antenna,
     emitter_antenna: Antenna,
     freq: float,
@@ -1883,6 +1926,7 @@ def ground_emitter_to_weather_sat_link_budget(
     Args:
         emitter_ecef: Ground emitter position in ECEF [x, y, z] (meters)
         weather_sat_ecef: Weather satellite position in ECEF [x, y, z] (meters)
+        boresight_target_ecef: FOV center ECEF (beam boresight ground point, meters)
         weather_sat_antenna: Weather satellite antenna object
         emitter_antenna: Ground emitter antenna object
         freq: Observation frequency in Hz
@@ -1901,10 +1945,6 @@ def ground_emitter_to_weather_sat_link_budget(
     Returns:
         float: Link budget (dimensionless)
     """
-    # Transform emitter to weather satellite frame
-    # Note: velocity is needed for coordinate transformation, but for ground emitters
-    # we can use a zero velocity placeholder since the transformation primarily
-    # depends on position
     weather_sat_velocity_ecef = np.array([0.0, 0.0, 0.0])
     emitter_dec, emitter_caz = ecef_to_weather_sat_frame(
         emitter_ecef[np.newaxis, :],
@@ -1914,8 +1954,14 @@ def ground_emitter_to_weather_sat_link_budget(
     emitter_dec = emitter_dec[0]
     emitter_caz = emitter_caz[0]
 
-    # Weather satellite receive gain (toward emitter)
-    gain_weather_sat = weather_sat_antenna.get_gain_value(emitter_dec, emitter_caz)
+    gain_weather_sat = float(
+        weather_sat_receive_gain_toward_ecef_beam_relative(
+            weather_sat_antenna,
+            weather_sat_ecef,
+            boresight_target_ecef,
+            emitter_ecef,
+        )[0]
+    )
 
     # Ground emitter transmit gain (toward weather satellite)
     # For emitter, we need angle from emitter's boresight to weather satellite
@@ -2197,14 +2243,6 @@ def model_weather_sat_observed_power_phase2(
             ws_ecef = ws_ecef_pos[ws_mask].iloc[0][['x', 'y', 'z']].values
             ws_vel = ws_ecef_vel[ws_mask].iloc[0][['vx', 'vy', 'vz']].values
 
-        # Transform target to weather satellite frame
-        target_dec, target_caz = ecef_to_weather_sat_frame(
-            target_ecef[np.newaxis, :],
-            ws_ecef[np.newaxis, :],
-            ws_vel[np.newaxis, :]
-        )
-        target_dec = target_dec[0]
-        target_caz = target_caz[0]
 
         # Find Starlink satellites at this time
         starlink_sats = starlink_traj_df[
@@ -2269,11 +2307,14 @@ def model_weather_sat_observed_power_phase2(
 
                     # Calculate link budget (includes polarization mismatch loss and harmonics)
                     link_budget = starlink_backlobe_to_weather_sat_link_budget(
-                        0.0, 0.0,  # Weather sat pointing at nadir
                         weather_sat_antenna,
-                        sat_dec, sat_caz,
-                        sat_to_ws_dist,
                         starlink_antenna,
+                        ws_ecef,
+                        target_ecef,
+                        sat_ecef,
+                        sat_dec,
+                        sat_caz,
+                        sat_to_ws_dist,
                         freq,
                         polarization_loss_factor=polarization_loss_factor,
                         starlink_fundamental_freq=starlink_fundamental_freq,
@@ -2463,8 +2504,13 @@ def model_weather_sat_observed_power_phase2(
                     sat_to_emitter_dists = np.linalg.norm(sat_to_emitter_vecs, axis=1)
 
                     # Vectorized antenna gain calculations using get_gain_values()
-                    gain_weather_sat_visible = weather_sat_antenna.get_gain_values(
-                        emitter_decs, emitter_cazs
+                    gain_weather_sat_visible = (
+                        weather_sat_receive_gain_toward_ecef_beam_relative(
+                            weather_sat_antenna,
+                            ws_ecef,
+                            target_ecef,
+                            emitter_ecef_visible,
+                        )
                     )
 
                     # Get valid angle ranges for emitter antenna (once)
@@ -2849,7 +2895,7 @@ def model_weather_sat_observed_power_phase2(
 
             # Earth brightness (through main lobe pointing at target)
             earth_temp_freq = calculate_earth_brightness_temperature(freq, earth_brightness_temp)
-            earth_gain = weather_sat_antenna.get_gain_value(target_dec, target_caz)
+            earth_gain = weather_sat_receive_gain_at_boresight(weather_sat_antenna)
             earth_power = temperature_to_power(earth_temp_freq, bandwidth) * earth_gain
 
             # Sky background (through sidelobes - use average gain)
@@ -3680,6 +3726,7 @@ def calculate_fresnel_reflection_coefficient(
 def starlink_ground_reflection_to_weather_sat_link_budget(
     starlink_ecef: np.ndarray,
     weather_sat_ecef: np.ndarray,
+    boresight_target_ecef: np.ndarray,
     weather_sat_antenna: Antenna,
     starlink_antenna: Antenna,
     freq: float,
@@ -3703,6 +3750,7 @@ def starlink_ground_reflection_to_weather_sat_link_budget(
     Args:
         starlink_ecef: Starlink position in ECEF [x, y, z] (meters)
         weather_sat_ecef: Weather satellite position in ECEF [x, y, z] (meters)
+        boresight_target_ecef: FOV center ECEF (beam boresight ground point, meters)
         weather_sat_antenna: Weather satellite antenna object
         starlink_antenna: Starlink antenna object
         freq: Observation frequency in Hz
@@ -3758,18 +3806,15 @@ def starlink_ground_reflection_to_weather_sat_link_budget(
             return 0.0, diagnostics
         return 0.0
 
-    # Transform reflection point to weather satellite frame
-    weather_sat_velocity_ecef = np.array([0.0, 0.0, 0.0], dtype=np.float64)
-    reflection_dec, reflection_caz = ecef_to_weather_sat_frame(
-        reflection_point[np.newaxis, :],
-        weather_sat_ecef[np.newaxis, :],
-        weather_sat_velocity_ecef[np.newaxis, :]
+    # Weather satellite receive gain toward reflection point (beam-relative)
+    gain_weather_sat = float(
+        weather_sat_receive_gain_toward_ecef_beam_relative(
+            weather_sat_antenna,
+            weather_sat_ecef,
+            boresight_target_ecef,
+            reflection_point,
+        )[0]
     )
-    reflection_dec = reflection_dec[0]
-    reflection_caz = reflection_caz[0]
-
-    # Weather satellite receive gain (main lobe looking at Earth, at reflection point)
-    gain_weather_sat = weather_sat_antenna.get_gain_value(reflection_dec, reflection_caz)
 
     # Calculate incidence angle at reflection point
     # Angle between Starlink-to-reflection vector and surface normal
@@ -4097,14 +4142,6 @@ def model_weather_sat_observed_power_phase3(
             ws_ecef = ws_ecef_pos[ws_mask].iloc[0][['x', 'y', 'z']].values
             ws_vel = ws_ecef_vel[ws_mask].iloc[0][['vx', 'vy', 'vz']].values
 
-        # Transform target to weather satellite frame
-        target_dec, target_caz = ecef_to_weather_sat_frame(
-            target_ecef[np.newaxis, :],
-            ws_ecef[np.newaxis, :],
-            ws_vel[np.newaxis, :]
-        )
-        target_dec = target_dec[0]
-        target_caz = target_caz[0]
 
         # Find Starlink satellites at this time
         starlink_sats = starlink_traj_df[
@@ -4170,11 +4207,14 @@ def model_weather_sat_observed_power_phase3(
 
                     # Calculate link budget (includes polarization mismatch loss and harmonics)
                     link_budget = starlink_backlobe_to_weather_sat_link_budget(
-                        0.0, 0.0,  # Weather sat pointing at nadir
                         weather_sat_antenna,
-                        sat_dec, sat_caz,
-                        sat_to_ws_dist,
                         starlink_antenna,
+                        ws_ecef,
+                        target_ecef,
+                        sat_ecef,
+                        sat_dec,
+                        sat_caz,
+                        sat_to_ws_dist,
                         freq,
                         polarization_loss_factor=polarization_loss_factor,
                         starlink_fundamental_freq=starlink_fundamental_freq,
@@ -4199,6 +4239,7 @@ def model_weather_sat_observed_power_phase3(
                             starlink_ground_reflection_to_weather_sat_link_budget(
                                 sat_ecef,
                                 ws_ecef,
+                                target_ecef,
                                 weather_sat_antenna,
                                 starlink_antenna,
                                 freq,
@@ -4467,8 +4508,13 @@ def model_weather_sat_observed_power_phase3(
                     sat_to_emitter_dists = np.linalg.norm(sat_to_emitter_vecs, axis=1)
 
                     # Vectorized antenna gain calculations
-                    gain_weather_sat_visible = weather_sat_antenna.get_gain_values(
-                        emitter_decs, emitter_cazs
+                    gain_weather_sat_visible = (
+                        weather_sat_receive_gain_toward_ecef_beam_relative(
+                            weather_sat_antenna,
+                            ws_ecef,
+                            target_ecef,
+                            emitter_ecef_visible,
+                        )
                     )
 
                     # Get valid angle ranges for emitter antenna
@@ -4790,7 +4836,7 @@ def model_weather_sat_observed_power_phase3(
 
             # Earth brightness (through main lobe pointing at target)
             earth_temp_freq = calculate_earth_brightness_temperature(freq, earth_brightness_temp)
-            earth_gain = weather_sat_antenna.get_gain_value(target_dec, target_caz)
+            earth_gain = weather_sat_receive_gain_at_boresight(weather_sat_antenna)
             earth_power = temperature_to_power(earth_temp_freq, bandwidth) * earth_gain
 
             # Sky background (through sidelobes - use average gain)
