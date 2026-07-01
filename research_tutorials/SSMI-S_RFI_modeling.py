@@ -25,6 +25,10 @@ Usage:
 
   python SSMI-S_RFI_modeling.py --sensor SSMI-S --nc4 util/SSMI-S/ssmis.2023080112.nc4 --out_dir util/SSMI-S
 
+  Default 5G density uses contiguous dense-urban metro GHSL (place shared
+  ``GHS_POP_*_metro.tif`` in ``research_tutorials/data/``). Per-cell legacy:
+  add ``--legacy-per-cell-5g``.
+
 Also writes ``<stem>_RFI.nc4``: native ``TMBR`` unchanged; ``TMBR_RFI`` = ``TMBR`` + summed RFI Tb on ch 1–5 after cloud/rain factor;
 ``CELL_RFI`` / ``GATE_RFI`` hold 5G-only and gateway-only Tb (K) on a compact channel axis (ch 1–5 only);
 ``CLOUD_RAIN_ATT`` (dB) on the same axis; channel dim ``nchans_rfi`` (Panoply defaults like ``nchans``);
@@ -72,9 +76,11 @@ from weather_sat_mdl import (  # noqa: E402
 )
 from weather_sat_nwp import (  # noqa: E402
     calculate_ssmis_fov_bearing_vectorized,
+    clear_ghsl_metro_raster_cache,
     clear_ghsl_raster_cache,
     combine_channel_csvs,
     copy_nc4_with_tmbr_plus_rfi,
+    get_emitter_density_metro_vectorized,
     get_emitter_density_vectorized,
     iter_valid_ts_sat_indices,
     load_country_5g_sensor_channel_csv,
@@ -82,6 +88,7 @@ from weather_sat_nwp import (  # noqa: E402
     model_rfi_nwp_5g_single_time_ssmis,
     obs_valid_ssmis_conical,
     replace_missing_with_nan,
+    resolve_ghsl_metro_tif_path,
     said_to_satellite_array,
     SENSOR_ALLOWED_SAIDS,
     SENSOR_SAID_TO_SATELLITE,
@@ -611,6 +618,14 @@ def main():
         ),
     )
     parser.add_argument(
+        "--legacy-per-cell-5g",
+        action="store_true",
+        help=(
+            "Use legacy per-cell ultra-dense GHSL (original GeoTIFF, no metro "
+            "contiguity filter). Default is metro-contiguous density."
+        ),
+    )
+    parser.add_argument(
         "--profile_rfi",
         action="store_true",
         help=(
@@ -736,6 +751,28 @@ def main():
         )
     )
 
+    use_metro_5g = not args.legacy_per_cell_5g
+    any_harmonic_in_band = any(
+        (cfg[1] - cfg[2] / 2.0)
+        <= 2.0 * emitter_fundamental_hz_list[i]
+        <= (cfg[1] + cfg[2] / 2.0)
+        for i, cfg in enumerate(SSMIS_CHANNEL_CONFIGS)
+    )
+    if use_metro_5g:
+        print("5G density: metro-contiguous (default)")
+        if any_harmonic_in_band:
+            metro_path = resolve_ghsl_metro_tif_path()
+            if not metro_path.is_file():
+                print(
+                    f"ERROR: Metro GHSL GeoTIFF not found: {metro_path}\n"
+                    "  Place GHS_POP_*_metro.tif in research_tutorials/data/\n"
+                    "  (obtain from project maintainer) or set GHSL_METRO_TIF_PATH.\n"
+                    "  Legacy per-cell: --legacy-per-cell-5g"
+                )
+                sys.exit(1)
+    else:
+        print("5G density: legacy per-cell (--legacy-per-cell-5g)")
+
     with open(top5_path, "w") as top5_file:
         top5_file.write("=" * 72 + "\n")
         top5_file.write("5G ground emitters (second harmonic in channel band)\n")
@@ -789,11 +826,18 @@ def main():
                 print(f"  Wrote {out_csv} ({len(df):,} rows)")
             else:
                 t0_dens = time_module.perf_counter()
-                density = get_emitter_density_vectorized(
-                    data["lat"],
-                    data["lon"],
-                    supported_5g_countries=supported,
-                )
+                if use_metro_5g:
+                    density = get_emitter_density_metro_vectorized(
+                        data["lat"],
+                        data["lon"],
+                        supported_5g_countries=supported,
+                    )
+                else:
+                    density = get_emitter_density_vectorized(
+                        data["lat"],
+                        data["lon"],
+                        supported_5g_countries=supported,
+                    )
                 print(
                     f"  Emitter density (vectorized) in "
                     f"{time_module.perf_counter() - t0_dens:.1f} s"
@@ -815,7 +859,10 @@ def main():
             ch_header = first_line + "\n" + countries_line
             _append_top5_block(top5_file, ch_header, df)
 
-        clear_ghsl_raster_cache()
+        if use_metro_5g:
+            clear_ghsl_metro_raster_cache()
+        else:
+            clear_ghsl_raster_cache()
         gc.collect()
 
         top5_file.write("\n" + "=" * 72 + "\n")

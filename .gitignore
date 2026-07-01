@@ -167,4 +167,6 @@ $RECYCLE.BIN/
 *.gif
 *.bmp
 *.tiff
+research_tutorials/data/*_metro.tif
+research_tutorials/data/*_metro.json
 *.svg
