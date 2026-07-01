@@ -129,6 +129,9 @@ _GHSL_TIF_PATH_ABS = _GHSL_TIF_PATH.resolve()
 # Optional override from environment (e.g. for multiprocessing when workers have different cwd)
 _GHSL_TIF_PATH_RESOLVED = Path(os.environ.get("GHSL_TIF_PATH", str(_GHSL_TIF_PATH_ABS)))
 
+# GHSL population per ~1 km² cell for dense-urban metro 5G mmWave modeling (build + runtime).
+GHSL_METRO_POP_THRESHOLD = 5000.0
+
 # Cached raster data (loaded once per process on first use; avoids spawn issues from importing rasterio at module load)
 _GHSL_RASTER = None
 _GHSL_TRANSFORM = None
@@ -162,6 +165,64 @@ def clear_ghsl_raster_cache() -> None:
     _GHSL_TRANSFORM = None
     _GHSL_HEIGHT = None
     _GHSL_WIDTH = None
+
+
+def resolve_ghsl_metro_tif_path() -> Path:
+    """Path to metro-filtered GHSL GeoTIFF (GHSL_METRO_TIF_PATH or sibling of GHSL path)."""
+    env_path = os.environ.get("GHSL_METRO_TIF_PATH", "").strip()
+    if env_path:
+        return Path(env_path).resolve()
+    ghsl = _GHSL_TIF_PATH_RESOLVED
+    return ghsl.with_name(f"{ghsl.stem}_metro.tif")
+
+
+_GHSL_METRO_TIF_PATH_RESOLVED = resolve_ghsl_metro_tif_path()
+
+# Cached metro-filtered GHSL raster (separate from native GHSL cache).
+_GHSL_METRO_RASTER = None
+_GHSL_METRO_TRANSFORM = None
+_GHSL_METRO_HEIGHT = None
+_GHSL_METRO_WIDTH = None
+
+
+def _load_ghsl_metro_raster() -> tuple[np.ndarray, object, int, int]:
+    """Load metro-filtered GHSL band once per process."""
+    global _GHSL_METRO_RASTER, _GHSL_METRO_TRANSFORM, _GHSL_METRO_HEIGHT, _GHSL_METRO_WIDTH
+    if _GHSL_METRO_RASTER is not None:
+        return (
+            _GHSL_METRO_RASTER,
+            _GHSL_METRO_TRANSFORM,
+            _GHSL_METRO_HEIGHT,
+            _GHSL_METRO_WIDTH,
+        )
+    metro_path = resolve_ghsl_metro_tif_path()
+    if not metro_path.is_file():
+        raise FileNotFoundError(
+            f"Metro-filtered GHSL GeoTIFF not found: {metro_path}. "
+            "Place GHS_POP_*_metro.tif in research_tutorials/data/ "
+            "(obtain from project maintainer) or set GHSL_METRO_TIF_PATH."
+        )
+    import rasterio
+
+    with rasterio.open(str(metro_path)) as dataset:
+        _GHSL_METRO_RASTER = np.asarray(dataset.read(1), dtype=np.float64)
+        _GHSL_METRO_TRANSFORM = dataset.transform
+        _GHSL_METRO_HEIGHT, _GHSL_METRO_WIDTH = _GHSL_METRO_RASTER.shape
+    return (
+        _GHSL_METRO_RASTER,
+        _GHSL_METRO_TRANSFORM,
+        _GHSL_METRO_HEIGHT,
+        _GHSL_METRO_WIDTH,
+    )
+
+
+def clear_ghsl_metro_raster_cache() -> None:
+    """Clear cached metro-filtered GHSL raster (frees RAM; next use reloads from disk)."""
+    global _GHSL_METRO_RASTER, _GHSL_METRO_TRANSFORM, _GHSL_METRO_HEIGHT, _GHSL_METRO_WIDTH
+    _GHSL_METRO_RASTER = None
+    _GHSL_METRO_TRANSFORM = None
+    _GHSL_METRO_HEIGHT = None
+    _GHSL_METRO_WIDTH = None
 
 
 def _rowcol(transform, lon: float, lat: float) -> tuple[int, int]:
@@ -232,11 +293,11 @@ def get_emitter_density(lat_lon: list, *, supported_5g_countries: dict[str, str]
     # STEP 4: Supported 5G country; set terrain and density from population
     # ---------------------------------------------------------
     country_name = supported_5g_countries[country_code]
-    if population > 10000:
-        terrain_type = 'Ultra-dense urban'
+    if population > GHSL_METRO_POP_THRESHOLD:
+        terrain_type = 'Dense urban metro'
         emitter_density_per_km2 = 15.0
     else:
-        terrain_type = 'below ultra-dense urban threshold'
+        terrain_type = 'below dense urban metro threshold'
         emitter_density_per_km2 = 0.0
 
     print(f"[{lat:7.4f}, {lon:8.4f}] -> Country: '{country_name}', "
@@ -380,7 +441,7 @@ def _population_to_density(
     """Map population and country to emitter density per km^2 (no print)."""
     if population <= 0 or country_code not in supported_5g_countries:
         return 0.0
-    if population > 10000:
+    if population > GHSL_METRO_POP_THRESHOLD:
         return 15.0
     return 0.0
 
@@ -498,6 +559,249 @@ def get_emitter_density_vectorized(
                 float(population[i]), cc, supported_5g_countries
             )
     return density
+
+
+def apply_metro_contiguity_filter(
+    population: np.ndarray,
+    transform,
+    *,
+    min_area_km2: float,
+    pop_threshold: float = GHSL_METRO_POP_THRESHOLD,
+    connectivity: int = 8,
+) -> tuple[np.ndarray, dict[str, Union[int, float]]]:
+    """
+    Zero ultra-dense speckles outside connected patches meeting ``min_area_km2``.
+
+    Components are labeled on cells with ``population > pop_threshold`` only.
+    Qualifying components keep original population; rejected ultra-dense cells
+    are set to 0; all other cells are unchanged.
+
+    Args:
+        population: 2D GHSL population grid.
+        transform: Rasterio affine transform for the grid.
+        min_area_km2: Minimum connected ultra-dense area (km²) to keep.
+        pop_threshold: Ultra-dense population per cell (default GHSL_METRO_POP_THRESHOLD).
+        connectivity: 4 or 8 neighbor connectivity for labeling.
+
+    Returns:
+        (filtered_population, stats_dict)
+    """
+    from rasterio.transform import xy
+    from scipy import ndimage
+
+    pop = np.asarray(population, dtype=np.float64)
+    if pop.ndim != 2:
+        raise ValueError("population must be a 2D array")
+    if min_area_km2 <= 0:
+        raise ValueError("min_area_km2 must be positive")
+    if connectivity not in (4, 8):
+        raise ValueError("connectivity must be 4 or 8")
+
+    ultra_dense = pop > pop_threshold
+    n_ultra_before = int(ultra_dense.sum())
+    if n_ultra_before == 0:
+        return pop.copy(), {
+            "n_ultra_dense_before": 0,
+            "n_ultra_dense_after": 0,
+            "n_components_total": 0,
+            "n_components_kept": 0,
+            "n_components_dropped": 0,
+        }
+
+    structure = ndimage.generate_binary_structure(2, 1 if connectivity == 4 else 2)
+    labeled, n_components = ndimage.label(ultra_dense, structure=structure)
+
+    height, width = pop.shape
+    rows = np.arange(height, dtype=np.int64)
+    cols_center = np.full(height, width // 2, dtype=np.int64)
+    _, lats = xy(transform, rows, cols_center, offset="center")
+    lats = np.asarray(lats, dtype=np.float64)
+    dlat_km = abs(float(transform.e)) * 111.32
+    dlon_km = abs(float(transform.a)) * 111.32 * np.cos(np.deg2rad(lats))
+    cell_area_km2 = dlat_km * dlon_km[:, np.newaxis]
+    cell_area_km2 = np.broadcast_to(cell_area_km2, pop.shape)
+
+    flat_labels = labeled.ravel()
+    flat_ultra = ultra_dense.ravel()
+    flat_area = cell_area_km2.ravel()
+    label_area_km2 = np.bincount(
+        flat_labels[flat_ultra],
+        weights=flat_area[flat_ultra],
+    )
+    qualifying_ids = np.where(label_area_km2 >= min_area_km2)[0]
+    qualifying_ids = qualifying_ids[qualifying_ids > 0]
+    keep = ultra_dense & np.isin(labeled, qualifying_ids)
+
+    out = pop.copy()
+    rejected = ultra_dense & ~keep
+    out[rejected] = 0.0
+
+    n_kept = int(qualifying_ids.size)
+    return out, {
+        "n_ultra_dense_before": n_ultra_before,
+        "n_ultra_dense_after": int(keep.sum()),
+        "n_components_total": int(n_components),
+        "n_components_kept": n_kept,
+        "n_components_dropped": int(n_components) - n_kept,
+    }
+
+
+def _get_emitter_density_vectorized_from_tif(
+    lat: np.ndarray,
+    lon: np.ndarray,
+    *,
+    tif_path: Path,
+    load_raster_fn,
+    supported_5g_countries: dict[str, str],
+    chunk_size: int = 50000,
+    ghsl_tile_size: int = 256,
+) -> np.ndarray:
+    """Vectorized emitter density from a GHSL GeoTIFF path (metro helper only)."""
+    import rasterio
+    from rasterio.transform import rowcol
+
+    try:
+        from rasterio.errors import RasterioIOError
+
+        _ghsl_load_errors = (OSError, MemoryError, RasterioIOError)
+    except ImportError:
+        _ghsl_load_errors = (OSError, MemoryError)
+
+    lat = np.atleast_1d(np.asarray(lat, dtype=np.float64))
+    lon = np.atleast_1d(np.asarray(lon, dtype=np.float64))
+    if lat.shape != lon.shape:
+        raise ValueError("lat and lon must have the same shape")
+    n = lat.size
+    lat = lat.ravel()
+    lon = lon.ravel()
+    finite_geo = np.isfinite(lat) & np.isfinite(lon)
+
+    if not tif_path.is_file():
+        raise FileNotFoundError(
+            f"GHSL GeoTIFF not found: {tif_path}. "
+            "Ensure the file exists or set GHSL_TIF_PATH / GHSL_METRO_TIF_PATH."
+        )
+
+    rows = np.zeros(n, dtype=np.int64)
+    cols = np.zeros(n, dtype=np.int64)
+    population = np.zeros(n)
+    try:
+        raster, transform, height, width = load_raster_fn()
+        for i in range(n):
+            if not finite_geo[i]:
+                rows[i], cols[i] = -1, -1
+                continue
+            r, c = rowcol(transform, float(lon[i]), float(lat[i]))
+            rows[i], cols[i] = int(r), int(c)
+        valid = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
+        population[valid] = raster[rows[valid], cols[valid]]
+    except _ghsl_load_errors:
+        from rasterio.windows import Window
+
+        with rasterio.open(str(tif_path)) as dataset:
+            height, width = dataset.height, dataset.width
+            transform = dataset.transform
+            for i in range(n):
+                if not finite_geo[i]:
+                    rows[i], cols[i] = -1, -1
+                    continue
+                r, c = rowcol(transform, float(lon[i]), float(lat[i]))
+                rows[i], cols[i] = int(r), int(c)
+            valid = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
+            if not np.any(valid):
+                return np.zeros(n)
+            r_valid = rows[valid]
+            c_valid = cols[valid]
+            tile_r = r_valid // ghsl_tile_size
+            tile_c = c_valid // ghsl_tile_size
+            valid_inds = np.where(valid)[0]
+            for tr, tc in set(zip(tile_r.tolist(), tile_c.tolist())):
+                in_tile = (tile_r == tr) & (tile_c == tc)
+                inds = valid_inds[in_tile]
+                r_min = int(rows[inds].min())
+                r_max = int(rows[inds].max())
+                c_min = int(cols[inds].min())
+                c_max = int(cols[inds].max())
+                win = Window(c_min, r_min, c_max - c_min + 1, r_max - r_min + 1)
+                block = np.asarray(dataset.read(1, window=win), dtype=np.float64)
+                for i in inds:
+                    population[i] = block[rows[i] - r_min, cols[i] - c_min]
+
+    density = np.zeros(n)
+    density[population <= 0] = 0.0
+    idx_pos = np.where(population > 0)[0]
+    if idx_pos.size == 0:
+        return density
+
+    for start in range(0, idx_pos.size, chunk_size):
+        end = min(start + chunk_size, idx_pos.size)
+        inds = idx_pos[start:end]
+        coords = [(float(lat[i]), float(lon[i])) for i in inds]
+        results = rg.search(coords, verbose=False)
+        for j, res in enumerate(results):
+            cc = res.get("cc", "")
+            i = inds[j]
+            density[i] = _population_to_density(
+                float(population[i]), cc, supported_5g_countries
+            )
+    return density
+
+
+def get_emitter_density_metro(
+    lat_lon: list,
+    *,
+    supported_5g_countries: dict[str, str],
+) -> float:
+    """
+    Emitter density from metro-filtered GHSL (contiguous ultra-dense regions).
+
+    Same rules as ``get_emitter_density`` but reads the offline metro GeoTIFF.
+    """
+    lat, lon = lat_lon
+    try:
+        raster, transform, height, width = _load_ghsl_metro_raster()
+        row, col = _rowcol(transform, lon, lat)
+        if 0 <= row < height and 0 <= col < width:
+            population = float(raster[row, col])
+        else:
+            population = 0.0
+    except FileNotFoundError:
+        raise
+    except Exception as e:
+        metro_path = resolve_ghsl_metro_tif_path()
+        raise RuntimeError(f"Error reading GeoTIFF at {metro_path}: {e}") from e
+
+    if population <= 0:
+        return 0.0
+
+    rg_result = rg.search((lat, lon), verbose=False)
+    country_code = rg_result[0].get("cc", "")
+    return _population_to_density(population, country_code, supported_5g_countries)
+
+
+def get_emitter_density_metro_vectorized(
+    lat: np.ndarray,
+    lon: np.ndarray,
+    *,
+    supported_5g_countries: dict[str, str],
+    chunk_size: int = 50000,
+    ghsl_tile_size: int = 256,
+) -> np.ndarray:
+    """
+    Vectorized emitter density from metro-filtered GHSL and country (5G support).
+
+    Uses the shared offline contiguous dense-urban metropolitan GeoTIFF
+    (``GHS_POP_*_metro.tif`` in ``research_tutorials/data/``).
+    """
+    return _get_emitter_density_vectorized_from_tif(
+        lat,
+        lon,
+        tif_path=resolve_ghsl_metro_tif_path(),
+        load_raster_fn=_load_ghsl_metro_raster,
+        supported_5g_countries=supported_5g_countries,
+        chunk_size=chunk_size,
+        ghsl_tile_size=ghsl_tile_size,
+    )
 
 
 def calculate_fov_dimensions_vectorized(

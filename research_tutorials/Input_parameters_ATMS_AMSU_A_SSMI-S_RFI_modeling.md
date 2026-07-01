@@ -82,12 +82,13 @@ Effective EIRP per FOV is `eirp_per_emitter_dbw + 10*log10(n_emitters)`. So dens
 | Variable name | Location | Unit | Description |
 |---------------|----------|------|-------------|
 | `country_5G_sensor_channel.csv` | `research_tutorials/data/` | CSV | Rows list countries; columns `country_name`, `ISO`, `ATMS`, `AMSU_A`, `SSMI_S`. A country is included for a given sensor channel when that sensor’s column equals the channel number (integer). |
-| `load_country_5g_sensor_channel_csv`, `supported_5g_countries_for_channel` | `src/weather_sat_nwp.py` | — | Load the CSV once; build `dict[str, str]` (ISO → name) per sensor and channel for `get_emitter_density_vectorized(..., supported_5g_countries=...)`. |
-| Population thresholds and density values | `src/weather_sat_nwp.py` (inside `_population_to_density()` function) | population per km²; density per km² | Logic: population > 10000 (Ultra-dense urban) → 15.0; all other population tiers (> 5000, > 1500, > 300, and Open/Rural) → 0. Units: emitter density per km². |
+| `load_country_5g_sensor_channel_csv`, `supported_5g_countries_for_channel` | `src/weather_sat_nwp.py` | — | Load the CSV once; build `dict[str, str]` (ISO → name) per sensor and channel for `get_emitter_density_metro_vectorized(..., supported_5g_countries=...)` (default) or legacy `get_emitter_density_vectorized`. |
+| `GHS_POP_*_metro.tif` | `research_tutorials/data/` (shared offline file) | GeoTIFF | Metro-filtered GHSL: dense-urban cells (population > 5000) in connected patches ≥ 25 km²; isolated speckles zeroed. Obtain from project maintainer; default name `GHS_POP_E2025_GLOBE_R2023A_4326_30ss_V1_0_metro.tif`. Override path with `GHSL_METRO_TIF_PATH`. |
+| Population thresholds and density values | `src/weather_sat_nwp.py` (`GHSL_METRO_POP_THRESHOLD`, `_population_to_density()`) | population per km²; density per km² | Logic: population > 5000 (dense urban metro) → 15.0; all lower tiers → 0. Units: emitter density per km². |
 
-Density is computed by `get_emitter_density_vectorized(lat, lon, supported_5g_countries=...)` using the European Union (EU) GHSL population raster and reverse geocoder for country. Only FOVs whose ISO code appears in the per-channel allowlist get non-zero density.
+Density is computed by **`get_emitter_density_metro_vectorized`** (default) from the metro-filtered GHSL GeoTIFF and reverse geocoder for country. Legacy per-cell mode: **`--legacy-per-cell-5g`** → `get_emitter_density_vectorized` on the original GHSL raster. Only FOVs whose ISO code appears in the per-channel allowlist get non-zero density.
 
-**Note:** Only ultra-dense urban cells (population > 10000 per km²) receive non-zero emitter density (15 emitters/km²). Adjust the population threshold and density value in `_population_to_density` if deployment assumptions change. Edit `country_5G_sensor_channel.csv` to change which countries contribute emitters for each sensor channel.
+**Note:** Only dense-urban metro cells (population > 5000 per km², `GHSL_METRO_POP_THRESHOLD`) in qualifying contiguous metropolitan regions receive non-zero emitter density (15 emitters/km²). Place the shared `GHS_POP_*_metro.tif` in `research_tutorials/data/` (or set `GHSL_METRO_TIF_PATH`). Legacy per-cell mode uses the native GHS-POP GeoTIFF via `--legacy-per-cell-5g`.
 
 ### 5.2 FOV dimensions and n_emitters
 
