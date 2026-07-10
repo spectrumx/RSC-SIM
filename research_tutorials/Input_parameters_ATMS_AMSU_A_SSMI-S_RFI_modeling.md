@@ -166,6 +166,13 @@ Fixed gateway sites: **direct uplink link budget**, then **regulatory OOBE mask*
 2. **Direct link budget** — ITU P.676 and FSPL at **`gateway_center_freq_hz`** (default equals channel center). This is **not** the same as remapping from the assigned Starlink uplink band via separate `L_atm` ratios; OOBE is a scalar mask only.
 3. **OOBE mask** — `starlink_gateway_uplink_oobe_attenuation_db(sensor_center_freq_hz)` in `starlink_gateway_mdl.py`: assigned uplink band **51.4–52.4 GHz** (sensor center in that band → **A = 0**), **B_N = 1 GHz**, OOB **A = 40·log10(F/50+1)** dB for **F ≤ 200%** of **B_N** from nearest edge, else **60 dB**. Applied after direct RFI: **`rfi_power_dBW` − A**, **`rfi_Tb_K` × 10^(−A/10)**.
 
+**NC4 output controls:**
+
+| Name | Location | Unit | Description |
+|------|----------|------|-------------|
+| `CLOUD_RAIN_ATT` | Each sensor script → `{stem}_RFI.nc4` | dB | Slant cloud/rain attenuation **A** on the compact channel axis; scales the increment added to **`TMBR_RFI`** only. |
+| `--final-rfi` | ATMS / AMSU-A / SSMI-S RFI scripts | — | Selects RFI sources added into **`TMBR_RFI`**: `Both` (default) = 5G + gateway; `Cell` = 5G only; `Gateway` = Starlink only. **`CELL_RFI`** / **`GATE_RFI`** are still written when their CSVs exist. |
+
 **Note:** Changing EIRP, antenna count, or pattern strongly changes gateway CSV Tb and **`GATE_RFI`**. **`GATE_RFI`** in nc4 is **post-OOBE** and **pre–cloud/rain**; **`CELL_RFI`** is 5G-only and pre–cloud/rain. Only the increment added to **`TMBR_RFI`** applies cloud/rain attenuation (§9).
 
 ---

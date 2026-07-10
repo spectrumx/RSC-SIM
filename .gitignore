@@ -149,6 +149,7 @@ $RECYCLE.BIN/
 # IDE
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 *~
@@ -169,4 +170,8 @@ $RECYCLE.BIN/
 *.tiff
 research_tutorials/data/*_metro.tif
 research_tutorials/data/*_metro.json
+research_tutorials/data/*.nc
 *.svg
+research_tutorials/util/ATMS/*
+research_tutorials/util/AMSU-A/*
+research_tutorials/util/SSMI-S/*

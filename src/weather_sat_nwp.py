@@ -1981,6 +1981,70 @@ def write_attenuated_combined_rfi_top5_file(
     print(text)
 
 
+FINAL_RFI_BOTH = "Both"
+FINAL_RFI_CELL = "Cell"
+FINAL_RFI_GATEWAY = "Gateway"
+FINAL_RFI_CHOICES = (FINAL_RFI_BOTH, FINAL_RFI_CELL, FINAL_RFI_GATEWAY)
+
+
+def resolve_tmbr_rfi_combined_path(
+    final_rfi: str,
+    *,
+    combined_sum_path: Optional[Union[str, Path]] = None,
+    combined_5g_path: Optional[Union[str, Path]] = None,
+    combined_gateway_path: Optional[Union[str, Path]] = None,
+) -> Optional[Path]:
+    """
+    Select which combined RFI CSV feeds ``TMBR_RFI`` for ``--final-rfi``.
+
+    * Both (default): summed 5G + Starlink combined CSV
+    * Cell: 5G-only combined CSV
+    * Gateway: Starlink-only combined CSV
+    """
+    mode = (final_rfi or FINAL_RFI_BOTH).strip()
+    if mode not in FINAL_RFI_CHOICES:
+        raise ValueError(
+            f"final_rfi must be one of {FINAL_RFI_CHOICES!r}, got {final_rfi!r}"
+        )
+    if mode == FINAL_RFI_BOTH:
+        chosen = combined_sum_path
+    elif mode == FINAL_RFI_CELL:
+        chosen = combined_5g_path
+    else:
+        chosen = combined_gateway_path
+    if chosen is None:
+        return None
+    path = Path(chosen).resolve()
+    return path if path.is_file() else None
+
+
+def tmbr_rfi_mode_description(final_rfi: str) -> str:
+    """Human-readable description of the ``TMBR_RFI`` increment source."""
+    mode = (final_rfi or FINAL_RFI_BOTH).strip()
+    if mode == FINAL_RFI_CELL:
+        return "TMBR + 5G RFI (Cell only)"
+    if mode == FINAL_RFI_GATEWAY:
+        return "TMBR + Starlink gateway RFI (Gateway only)"
+    return "TMBR + 5G + Starlink gateway RFI"
+
+
+_TMBR_RFI_NC4_LONG_NAME_SUFFIX = (
+    "(native TMBR plus cloud-rain-scaled summed RFI on modeled channels)"
+)
+
+
+def tmbr_rfi_nc4_long_name(final_rfi: str) -> str:
+    """NetCDF ``long_name`` for ``TMBR_RFI`` matching ``--final-rfi`` mode."""
+    mode = (final_rfi or FINAL_RFI_BOTH).strip()
+    if mode == FINAL_RFI_CELL:
+        prefix = "BRIGHTNESS TEMPERATURE with 5G cellular RFI "
+    elif mode == FINAL_RFI_GATEWAY:
+        prefix = "BRIGHTNESS TEMPERATURE with Starlink gateway RFI "
+    else:
+        prefix = "BRIGHTNESS TEMPERATURE with 5G and Starlink gateway "
+    return prefix + _TMBR_RFI_NC4_LONG_NAME_SUFFIX
+
+
 def copy_nc4_with_tmbr_plus_rfi(
     src_nc4: Union[str, Path],
     dst_nc4: Union[str, Path],
@@ -1995,6 +2059,7 @@ def copy_nc4_with_tmbr_plus_rfi(
     combined_rfi_df: Optional[pd.DataFrame] = None,
     combined_rfi_df_5g: Optional[pd.DataFrame] = None,
     combined_rfi_df_starlink: Optional[pd.DataFrame] = None,
+    final_rfi: str = FINAL_RFI_BOTH,
 ) -> Path:
     """
     Copy a netCDF-4 file and add a new variable ``TMBR_RFI`` with native ``TMBR`` plus RFI.
@@ -2052,6 +2117,8 @@ def copy_nc4_with_tmbr_plus_rfi(
             again (lowers peak RAM when the caller already loaded it).
         combined_rfi_df_5g: Same for the 5G combined CSV (must match row count of summed CSV).
         combined_rfi_df_starlink: Same for the Starlink combined CSV.
+        final_rfi: ``--final-rfi`` mode for ``TMBR_RFI`` ``long_name`` metadata
+            (``Both``, ``Cell``, or ``Gateway``; default ``Both``).
 
     Returns:
         Resolved path to ``dst_nc4``.
@@ -2204,11 +2271,7 @@ def copy_nc4_with_tmbr_plus_rfi(
             rfi_v = ds.createVariable(rfi_name, tmbr_dtype, v.dimensions)
         rfi_v[:] = out_to_store
         try:
-            rfi_v.setncattr(
-                "long_name",
-                "BRIGHTNESS TEMPERATURE with 5G and Starlink gateway "
-                "(native TMBR plus cloud-rain-scaled summed RFI on modeled channels)",
-            )
+            rfi_v.setncattr("long_name", tmbr_rfi_nc4_long_name(final_rfi))
             if "units" in v.ncattrs():
                 rfi_v.setncattr("units", v.getncattr("units"))
             else:

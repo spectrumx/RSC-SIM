@@ -23,7 +23,8 @@ Usage:
 
   Default 5G density uses contiguous dense-urban metro GHSL (place shared
   ``GHS_POP_*_metro.tif`` in ``research_tutorials/data/``). Per-cell legacy:
-  add ``--legacy-per-cell-5g``.
+  add ``--legacy-per-cell-5g``. ``--final-rfi`` selects what is added into
+  ``TMBR_RFI`` (default Both = 5G + gateway; Cell or Gateway for one source).
 
 Also writes ``<stem>_RFI.nc4``: native ``TMBR`` unchanged; ``TMBR_RFI`` = ``TMBR`` + summed RFI Tb on ch 3–8 after cloud/rain factor;
 ``CELL_RFI`` / ``GATE_RFI`` hold 5G-only and gateway-only Tb (K) on a compact channel axis (ch 3–8 only);
@@ -70,6 +71,7 @@ from weather_sat_mdl import (  # noqa: E402
     load_weather_sat_antenna_from_csv,
 )
 from weather_sat_nwp import (  # noqa: E402
+    FINAL_RFI_CHOICES,
     clear_ghsl_metro_raster_cache,
     clear_ghsl_raster_cache,
     combine_channel_csvs,
@@ -83,6 +85,7 @@ from weather_sat_nwp import (  # noqa: E402
     obs_valid_cross_track,
     replace_missing_with_nan,
     resolve_ghsl_metro_tif_path,
+    resolve_tmbr_rfi_combined_path,
     said_to_satellite_array,
     scalar_altitude_m_from_hmsl,
     SENSOR_ALLOWED_SAIDS,
@@ -90,6 +93,7 @@ from weather_sat_nwp import (  # noqa: E402
     sum_two_rfi_combined_csvs_by_channel,
     supported_5g_countries_for_channel,
     timestamp_from_nc4_vars,
+    tmbr_rfi_mode_description,
     write_attenuated_combined_rfi_top5_file,
 )
 
@@ -620,6 +624,16 @@ def main():
         ),
     )
     parser.add_argument(
+        "--final-rfi",
+        choices=FINAL_RFI_CHOICES,
+        default="Both",
+        help=(
+            "RFI sources added into TMBR_RFI in {stem}_RFI.nc4 (default Both): "
+            "Both = 5G + Starlink gateway; Cell = 5G only; Gateway = Starlink only. "
+            "CELL_RFI and GATE_RFI are always written when their CSVs exist."
+        ),
+    )
+    parser.add_argument(
         "--profile_rfi",
         action="store_true",
         help=(
@@ -975,26 +989,38 @@ def main():
     )
     if sum_path is not None:
         print(f"Wrote summed Tb combined CSV to {sum_path}.")
-        rfi_nc4 = Path(out_dir) / f"{out_base_nc4}_RFI.nc4"
+
+    csv_5g = Path(out_dir) / f"{out_base_nc4}_{RFI_PREFIX_5G}_RFI_combined.csv"
+    csv_sl = Path(out_dir) / f"{out_base_nc4}_{RFI_PREFIX_STARLINK}_RFI_combined.csv"
+    tmbr_combined_path = resolve_tmbr_rfi_combined_path(
+        args.final_rfi,
+        combined_sum_path=sum_path,
+        combined_5g_path=combined_5g,
+        combined_gateway_path=combined_sl,
+    )
+    rfi_nc4 = Path(out_dir) / f"{out_base_nc4}_RFI.nc4"
+    if tmbr_combined_path is None:
+        print(
+            f"WARNING: Cannot write {rfi_nc4.name}: no combined RFI CSV for "
+            f"--final-rfi {args.final_rfi!r}."
+        )
+    else:
         ch_nums = [cfg[0] for cfg in AMSUA_CHANNEL_CONFIGS]
         try:
-            csv_5g = Path(out_dir) / f"{out_base_nc4}_{RFI_PREFIX_5G}_RFI_combined.csv"
-            csv_sl = Path(out_dir) / f"{out_base_nc4}_{RFI_PREFIX_STARLINK}_RFI_combined.csv"
-
-            df_sum_cr = pd.read_csv(sum_path)
-            lat_cr = pd.to_numeric(df_sum_cr["lat"], errors="coerce").to_numpy(
+            df_tmbr_cr = pd.read_csv(tmbr_combined_path)
+            lat_cr = pd.to_numeric(df_tmbr_cr["lat"], errors="coerce").to_numpy(
                 dtype=np.float64
             )
-            lon_cr = pd.to_numeric(df_sum_cr["lon"], errors="coerce").to_numpy(
+            lon_cr = pd.to_numeric(df_tmbr_cr["lon"], errors="coerce").to_numpy(
                 dtype=np.float64
             )
-            saza_cr = pd.to_numeric(df_sum_cr["saza"], errors="coerce").to_numpy(
+            saza_cr = pd.to_numeric(df_tmbr_cr["saza"], errors="coerce").to_numpy(
                 dtype=np.float64
             )
             elevation_deg_cr = 90.0 - np.abs(saza_cr)
             data_dir_cr = os.path.join(_script_dir, "data")
             itu_nc_cr = itu_iclw_rain_info_nc_path(
-                os.path.basename(sum_path), data_dir_cr
+                os.path.basename(tmbr_combined_path), data_dir_cr
             )
             center_freqs_ghz_cr = (
                 np.array([cfg[1] for cfg in AMSUA_CHANNEL_CONFIGS], dtype=np.float64)
@@ -1019,35 +1045,44 @@ def main():
             del itu_nc_cr, center_freqs_ghz_cr, rng_cr, data_dir_cr
             gc.collect()
 
-            top5_att_path = (
-                Path(out_dir) / f"{out_base_nc4}_5G_Starlink_Gateway_Attenuation_top5.txt"
-            )
-            df_5g_cr = pd.read_csv(csv_5g)
-            df_sl_cr = pd.read_csv(csv_sl)
-            write_attenuated_combined_rfi_top5_file(
-                top5_att_path,
-                df_sum_cr,
-                df_5g_cr,
-                df_sl_cr,
-                ch_nums,
-                atten_by_ch,
-            )
+            df_5g_cr = pd.read_csv(csv_5g) if csv_5g.is_file() else None
+            df_sl_cr = pd.read_csv(csv_sl) if csv_sl.is_file() else None
+            if (
+                sum_path is not None
+                and csv_5g.is_file()
+                and csv_sl.is_file()
+            ):
+                top5_att_path = (
+                    Path(out_dir)
+                    / f"{out_base_nc4}_5G_Starlink_Gateway_Attenuation_top5.txt"
+                )
+                df_sum_cr = pd.read_csv(sum_path)
+                write_attenuated_combined_rfi_top5_file(
+                    top5_att_path,
+                    df_sum_cr,
+                    df_5g_cr,
+                    df_sl_cr,
+                    ch_nums,
+                    atten_by_ch,
+                )
 
             copy_nc4_with_tmbr_plus_rfi(
                 args.nc4,
                 rfi_nc4,
-                sum_path,
+                tmbr_combined_path,
                 tmbr_channel_numbers_with_rfi=ch_nums,
                 n_tmbr_channels=TMBR_N_CHANNELS,
-                combined_rfi_csv_5g=csv_5g,
-                combined_rfi_csv_starlink=csv_sl,
+                combined_rfi_csv_5g=csv_5g if csv_5g.is_file() else None,
+                combined_rfi_csv_starlink=csv_sl if csv_sl.is_file() else None,
                 cloud_rain_atten_db_by_channel=atten_by_ch,
-                combined_rfi_df=df_sum_cr,
+                combined_rfi_df=df_tmbr_cr,
                 combined_rfi_df_5g=df_5g_cr,
                 combined_rfi_df_starlink=df_sl_cr,
+                final_rfi=args.final_rfi,
             )
             print(
-                f"Wrote RFI-augmented netCDF (native TMBR unchanged; TMBR_RFI with cloud/rain-scaled summed RFI, "
+                f"Wrote RFI-augmented netCDF (native TMBR unchanged; TMBR_RFI with "
+                f"cloud/rain-scaled {tmbr_rfi_mode_description(args.final_rfi)}, "
                 f"CELL_RFI, GATE_RFI, CLOUD_RAIN_ATT on ch 3–8) to {rfi_nc4}."
             )
         except FileNotFoundError:
@@ -1055,9 +1090,10 @@ def main():
         except ValueError:
             raise
         except Exception as e:
-            print(f"WARNING: Could not write {rfi_nc4.name}: {e}, likely lack of system memory in the machine")
-    else:
-        print("WARNING: Could not build 5G+Starlink summed combined CSV (missing or mismatched inputs).")
+            print(
+                f"WARNING: Could not write {rfi_nc4.name}: {e}, likely lack of "
+                "system memory in the machine"
+            )
 
     elapsed = time_module.perf_counter() - t_start
     print(f"\nOverall execution time: {elapsed:.1f} s")
