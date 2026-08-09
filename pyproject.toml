@@ -54,6 +54,7 @@ demo = [
     "pydeck>=0.8.0",
     "streamlit-folium>=0.18.0",
     "folium>=0.15.0",
+    "reflex>=0.6.8.post1",
 ]
 
 [tool.setuptools.packages.find]
