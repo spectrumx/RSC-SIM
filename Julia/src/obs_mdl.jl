@@ -1,138 +1,90 @@
-import CSV
 
 """
-beam_avoid in degrees
-sky_mdl in K and depends on dec, caz, time and freq
 """
-function model_observed_temp!(obs::Observation,
-    sky_mdl::Function = (a,e,t -> 0.),
-    constellation::Union{Nothing,Constellation,AbstractVector{Constellation}} = nothing)
-
-    @assert !hasmethod(sky_mdl, (Real, Real, DateTime, Real))
-
-    @warn "There may be an issue in terms of absolute temperature (bandwith scaling?)"
-
+function model_observ_psd!(obs::Observation{T},
+    sky_mdl::Union{AbstractBkg,Nothing} = nothing,
+    constellation::Vector{Constellation{T}} = Constellation{T}[]) where T
+    
+    ## Extract useful information from observation
+    # get antenna trajectory during observation
+    ant_traj = obs.antenna_traj
     # get time samples of observation
-    times = get_time_stamps(obs)
-    # pointing position of antenna during observation
-    points = get_traj(obs)
-
+    time_samps = ant_traj.times
+    # time resolution of observation
+    time_res = minimum(diff(time_samps))
     # get instrument used for observation
-    instru = get_instrument(obs)
-    # receiver bandwidth
-    bw_RX = get_bandwidth(instru)
-    # number of frequency channels
-    freq_chan = get_nb_freq_chan(instru)
-    # receiver frequencies (center freq of each freq channels)
-    instru_freq = get_center_freq(instru)
-    f_RX = get_center_freq_chans(instru)
-    # receiver temperature
-    T_RX  = get_inst_signal(instru)
-    # antenna physical temnperature
-    T_phy = get_phy_temp(instru)
-    # antenna of instrument
-    instru_ant = get_antenna(instru)
-    # radiation efficiency of antenna
-    eta_rad = get_rad_eff(instru_ant)
-    # max gain of antenna
-    max_gain = get_boresight_gain(instru_ant)
+    instru = obs.instrument
+    # get antenna of instrument
+    ant = instru.antenna
+    # get reciever of instrument
+    rec = instru.receiver
+    # get rotation matrices for antenna pointing
+    rot_mats = rot_mat.(ant_traj.traj)
 
-    if !isnothing(constellation)
-        # temperature of satellites for each constellations
-        cons_temps = Function[]
-        # antenna of satellites for each constellations
-        cons_ant = Antenna[]
-        if typeof(constellation) <: Constellation
-            constellation = [constellation]
-        end
-        for c in eachindex(constellation)
-            con = constellation[c]
-            # get antenna of satellites
-            push!(cons_ant, get_antenna(con))
-            # get transmitter of satellites
-            sat_TX = get_transmitter(con)
-            # satellite frequency
-            f_sat = get_center_freq(sat_TX)
-            # satellite bandwidth
-            bw_sat = get_bandwidth(sat_TX)
-            # check constellation is visible by receiver
-            visible_band = [max(instru_freq - bw_RX/2, f_sat - bw_sat/2),
-                            min(instru_freq + bw_RX/2, f_sat + bw_sat/2)] #FIXME:
-            visible_bw = visible_band[2] - visible_band[1]
-
-            visible_bw < 0 && error("Constellation #$(c) not seen by telescope receiver")
-
-            # get satellite temperature (transmition)
-            push!(cons_temps, get_inst_signal(sat_TX)) # in K
-        end
+    ## Compute instrument temperature components
+    # gain of instrument for temperature
+    gain_instru = get_psd_gain_coeff(instru)
+    # instrument noise temperature
+    T_n_instru = rec.T_rx .+ get_antenna_radiation_loss(ant)
+    # add to result
+    if typeof(T_n_instru) <: DimArray
+        obs.result .= broadcast_dims(+, obs.result, T_n_instru)
+    else
+        obs.result .+= T_n_instru
     end
 
-    # get result storage shaped as times x pointing positions
-    result = get_result(obs)
-    # simulate for each time sample
-    for t in axes(result, 1)
-        samp = times[t]
-        # pointing position
-        for p in axes(result, 2)
-            # antenna pointing at time t in telescope frame
-            # (declination, counter-azimuth)
-            dec_tel = pi/2 - deg2rad(points[points.times .== samp,:elevations][1][p])
-            caz_tel = -deg2rad(points[points.times .== samp,:azimuths][1][p])
-            for f in axes(result, 3)
-                # frequency channel
-                f_bin = f_RX[f]
-                # sky temperature
-                #FIXME: source and sky needs to be separated to integrate sky
-                #over full field of view (not a point-like source) Or sky_mdl
-                #needs to be a custon structure that integrate gain over full
-                #sky when pointing at position p
-                T_sky = max_gain * sky_mdl(dec_tel, caz_tel, samp, f_bin)
+    ## Compute background antenna temperature
+    if !isnothing(sky_mdl)
+        # get antenna temperature for antenna trajectories
+        obs.result .= broadcast_dims(+, obs.result,
+                                     get_antenna_temperature(ant, sky_mdl, ant_traj; 
+                                                             pre_load_rot_mat=rot_mats))
+    end
 
-                # satellite temperatures
-                T_sat = 0.
-                if !isnothing(constellation)
-                    for c in eachindex(constellation)
-                        # c-th constellation
-                        con = constellation[c]
-                        # satellites transmission in freq bin
-                        sat_tmt = cons_temps[c](samp, f_bin)
-                        # satellite transmitter
-                        instru_sat = get_transmitter(con)
-                        # link budget model
-                        lnk_bdgt = get_lnk_bdgt_mdl(con)
-                        # satellites antenna gain pattern
-                        # sat_ant = cons_ant[c]
-
-                        # satellite(s) up at time t
-                        sats_t = subset(con.sats, :times => ts -> ts .== samp; view=true)
-                        for s in axes(sats_t, 1)
-                            # coordinates of sat at time t in telescope frame
-                            # (declination, counter-azimuth, distance)
-                            dec_sat = pi/2 - deg2rad(sats_t[s,:elevations])
-                            caz_sat = -deg2rad(sats_t[s,:azimuths])
-                            rng_sat = sats_t[s,:distances]
-
-                            # link budget
-                            link_val = lnk_bdgt(dec_tel, caz_tel, instru,
-                                              dec_sat, caz_sat, rng_sat, instru_sat,
-                                              f_bin)
-                            T_sat += link_val * sat_tmt
-                        end
-                    end
+    ## Compute constellations contribution#TODO: put in sat_mdl.jl?
+    for co in constellation
+        # link budget model for constellation
+        lnk_bdgt = co.lnk_bdgt_mdl
+        # different constellation may have different load hence the :dynamic here
+        @threads :dynamic for t in eachindex(time_samps)
+            # get pointing positions of antenna
+            t_samp = time_samps[t]
+            ant_coords = ant_traj.traj[t,:]
+            # list of sats visible at time t_samp
+            sats_names_at_t = get_sats_names_at_time(co, t_samp; time_res=time_res)
+            for s_name in sats_names_at_t
+                # satellite
+                sat = get_sat(co, s_name)
+                # coordinates of sat at time t_samp in topocentric frame
+                sat_coord = get_sat_traj(sat)(t_samp-time_res, t_samp+time_res)[1]#(t_samp)[1]#FIXME:
+                # satellite instrument
+                sat_instru = sat.instrument
+                # satellite EIRP_density at time t_samp
+                sat_EIRP_den = get_sat_EIRP_density(sat, t_samp; time_res=time_res) ./ 
+                               k_boltz
+                # loop over antenna positions
+                for c_ind in eachindex(ant_coords)
+                    ant_c = ant_coords[c_ind]
+                    # link budget
+                    l = lnk_bdgt(sat_coord, sat_instru, ant_c, instru; 
+                                 pre_load_rot_mat=rot_mats[t,c_ind])
+                    
+                    # update satellite contribution
+                    obs.result[times=t,traj_idx=c_ind] .+= l .* sat_EIRP_den
                 end
-
-                # antenna tenperature
-                T_A = 1/(4π) * (T_sat + T_sky)
-
-                # system temperature
-                T_sys = T_A + (1 - eta_rad)*T_phy + T_RX(samp, f_bin)
-
-                result[t,p,f] = T_sys #* delta_freq #FIXME:
-
             end
         end
     end
 
-    return result
+    # add gain effect
+    obs.result .= broadcast_dims(*, obs.result, gain_instru)
+
+    return obs.result
 end
 
+function model_observ_psd!(obs::Observation{T},
+    sky_mdl::Union{AbstractBkg,Nothing},
+    constellation::Constellation{T}) where T
+
+    return model_observ_psd!(obs, sky_mdl, [constellation])
+end

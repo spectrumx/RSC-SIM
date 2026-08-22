@@ -1,8 +1,11 @@
 
-using DataFrames
 using Dates
+using DimensionalData
+using DSP
+using FFTW
 using PyPlot
 const plt = PyPlot
+using Statistics
 
 using Revise
 using RadioMdl
@@ -11,57 +14,97 @@ using RadioMdl
 ### INSTRUMENT ###
 
 ## Antenna
+# Size of antenna in m
+ant_diameter = 18.3
+
+# aperture efficiency
+eta_app = .7
+
 # radiation efficiency of telescope antenna
-eta_rad = .45
+eta_rad = .99
 
 # valid frequency band of gain pattern model
 freq_band = (10e9, 12e9) # in Hz
 
-# load telescope antenna
-file_pattern_path = "/home/samthe/Documents/Data/Radio/Westford_Antenna/\
-                     Gain_pattern_Ku_band/single_cut_res.cut"
-tel_ant = Antenna(file_pattern_path, eta_rad, freq_band;
-                            power_tag=:power,
-                            declination_tag=:alpha,
-                            azimuth_tag=:beta)
-
-#=
-nb_curv = 5 # number of slices to plot
-alphas, betas = get_def_angles(tel_ant) # angles where gain is defined by the file
-step_beta_ind = div(length(betas), 2*nb_curv)
-fig, axs = plt.subplots(subplot_kw=Dict("projection"=>"polar"))
-for i in 1:step_beta_ind:div(length(betas), 2)
-    alphas, gains = get_slice_gain(tel_ant, betas[i])
-    axs.plot(deg2rad.(alphas), 10 .*log10.(gains), label="β = $(betas[i])deg")
-end
-axs.legend()
-fig.tight_layout()
-=#
-
 # telescope antenna physical temperature
 T_phy = 300.0 # in K
 
+# load telescope antenna
+file_pattern_path = "supp/single_cut_res.cut"
+tel_ant = Antenna(file_pattern_path, ant_diameter, eta_app, eta_rad, freq_band, T_phy)
+
+# alphas = [0., 180., 359.]
+# betas = 0.:1.:180.
+# # tel_gain_pat = antenna_mdl_ITU_SA_509_3(1.553826454066362e6,
+# # 8.938834164371842, alphas, betas)
+# tel_gain_pat = antenna_mdl_cst(1.553826454066362e6, alphas, betas)
+# tel_ant = Antenna(ant_diameter, tel_gain_pat, eta_app, eta_rad, freq_band, T_phy)
+
+#=
+alpha_grid = tel_ant.gain_pat.alpha_grid
+beta_grid = tel_ant.gain_pat.beta_grid
+smap = tel_ant.gain_pat.spheremap
+fig, axs = plt.subplots(subplot_kw=Dict("projection"=>"polar"))
+im = axs.pcolormesh(deg2rad.(alpha_grid), beta_grid, 10. .*log10.(smap'); cmap="viridis")
+fig.colorbar(im, label="Power (dBW)")
+axs.set_theta_zero_location("N")
+fig.tight_layout()
+=#
+
 
 ## Receiver
+# freq resolution in Hz
+freq_res = 2e6
+
 # frequency of observation
-cent_freq = 10.820e9 # in Hz
+cent_freq = 10.825e9 # in Hz
 
 # bandwidth of telescope receiver
-bw = 1e3 # in Hz
+bw = 1024e6 # in Hz
+
+# gain of amplifier chain
+gain_amps = 10^(80/10)
 
 # number of frequency channels to devide the bandwidth
-freq_chan = 1
+freq_chan = Int(div(bw, freq_res))
 
-# telescope receiver temperature
-T_RX(time::DateTime, freq::Real) = 80.0 # in K
+# fequency channels
+freq_bins = freq_range(freq_res, cent_freq, bw)
+
+# telescope receiver temperature in K
+adc_vpp = 1. # in Volts
+adc_nb_bits = 16
+T_adc = adc_noise_temperature(adc_vpp, adc_nb_bits, bw; instru_imp=50.)
+T_LNA = 100. # in K
+T_rx = friis_noise_temp((T_LNA, gain_amps), (T_adc, 1.)) # in K
+
+# freq response
+responsetype = Lowpass(bw/2-freq_res)
+designmethod = FIRWindow(hamming(freq_chan+1)) # avoid 0 tap at beginning
+filter_design = digitalfilter(responsetype, designmethod; fs=bw)
+filter_design ./= sum(filter_design)
+freq_resp = abs.(fftshift(fft(filter_design)))[1:end-1].^2
+
+# create receiver
+receiver = Receiver(freq_res, cent_freq, bw, gain_amps, T_rx, freq_resp)
+
+#=
+figure()
+plt.plot(freq_range(receiver), receiver.freq_resp)
+plt.yscale("log")
+plt.xlabel("Frequency [Hz]")
+plt.ylabel("Frequency response")
+plt.tight_layout()
+=#
 
 
 ## Telescope
 # coordinates of telescope
-coords = [42.6129479883915, -71.49379366344017, 86.7689687917009]
+coords = Dict(:lat => 42.6129479883915, :lon => -71.49379366344017, 
+              :alt => 86.7689687917009)
 
 # create instrument
-westford = Instrument(tel_ant, T_phy, cent_freq, bw, T_RX, freq_chan, coords)
+westford = Instrument(tel_ant, receiver, coords)
 
 
 
@@ -69,179 +112,219 @@ westford = Instrument(tel_ant, T_phy, cent_freq, bw, T_RX, freq_chan, coords)
 
 ## Source trajectory over observation window
 # observation window
-start_window = "2025-03-07T14:00:00.000"
-stop_window = "2025-03-07T17:00:00.000"
+dateformat = "yyyy-mm-dd\\THH:MM:SS.sss"
+start_window = "2025-02-18T15:00:00.000"
+stop_window = "2025-02-18T15:45:00.000"
 
 # source position over time
 # to get the trajectory of the source over Westford, launch the Python script
 # 'compute_obj_overflights_full_traj.py'#TODO: implement in Julia
 file_traj_obj_path = "supp/traj_files/casA_trajectory_Westford_$(start_window)_\
                       $(stop_window).arrow"
-traj_src = Trajectory(file_traj_obj_path;
-                      time_tag = :time_stamps,
-                      elevation_tag = :altitudes,
-                      azimuth_tag = :azimuths,
-                      distance_tag = :distances)
+traj_src = Trajectory(file_traj_obj_path; time_tag = :time_stamps, 
+                      azimuth_tag = :azimuths, elevation_tag = :altitudes,
+                      date_format = dateformat)
 
 
 ## Observation Parameters
 # start-end of observation
-dateformat = "yyyy-mm-dd\\THH:MM:SS.sss"
-start_obs = DateTime("2025-03-07T14:36:30.000", dateformat)
-stop_obs = DateTime("2025-03-07T15:06:30.000", dateformat)
+start_obs = DateTime("2025-02-18T15:30:00.000", dateformat)
+stop_obs = DateTime("2025-02-18T15:40:00.000", dateformat)
 
 # offset from source at the beginning of the observation
-offset_angles = (-20, 0.) # (az,el) in degrees
+offset_angles = SphereCoord(20., 0.) # (caz,pol) in degrees
 
 # time of OFF-ON transition
 time_off_src = start_obs
-time_on_src = time_off_src + Minute(20)
+time_on_src = time_off_src + Minute(5)
 
 # copy trajectory
-traj_obj = Trajectory(copy(traj_src.traj))
+traj_obs_1 = copy(traj_src)
 
 # apply offset
-traj_off_ind = findall(time_off_src .<= traj_obj.traj[!,:times] .<= time_on_src)
-traj_obj.traj[traj_off_ind,:azimuths] .+= offset_angles[1]
-traj_obj.traj[traj_off_ind,:elevations] .+= offset_angles[2]
+offset_angle_trajectory!(traj_obs_1, offset_angles, time_off_src, time_on_src;
+                         subtract_angles=true)
 
-# filter points below 5deg elevation
-filt_el = (:elevations => e -> e .> 5.)
+# add second trajectory
+traj_obs_2 = copy(traj_src)
+offset_angle_trajectory!(traj_obs_2, SphereCoord(20., 0.), start_obs, stop_obs)
+
+# add third trajectory
+traj_obs_3 = Trajectory(SphereCoord(45., 45.), traj_obs_1.times)
+offset_angle_trajectory!(traj_obs_3, offset_angles, time_off_src, time_on_src)
+
+
+# create the multiple trajectory
+traj_obs = Trajectory(hcat(traj_obs_1.traj, traj_obs_2.traj, traj_obs_3.traj), 
+                      traj_obs_1.times)
 
 # create observation
-observ = Observation(start_obs, stop_obs, traj_obj, westford;
-                     filt_funcs = (filt_el,))
+observ = Observation(traj_obs, westford, start_obs, stop_obs)
 
 #=
-fig = plt.figure()
-ax = fig.add_subplot(1, 1, 1, polar=true)
-src_traj = get_traj(traj_src)
-obs_traj = get_traj(observ)
-ax.plot(deg2rad.(src_traj[!,:azimuths]), [90 .- s4 for s4 in src_traj[!,:elevations]], 
-        label="source")
-ax.plot(deg2rad.(obs_traj[!,:azimuths]), [90 .- s4 for s4 in obs_traj[!,:elevations]], 
-        label="pointing")
-ax.set_yticks(0:10:90, string.(Vector(90:-10:0)))
-ax.legend()
-ax.set_theta_zero_location("N")
+az_src = 360. .- [traj_src.traj[i].alpha for i in 1:size(traj_src.traj,1)]
+pol_src = [traj_src.traj[i].beta for i in 1:size(traj_src.traj,1)]
+fig, axs = plt.subplots(subplot_kw=Dict("projection"=>"polar"))
+axs.plot(deg2rad.(az_src), pol_src, label="source", color="black")
+for j in axes(observ.antenna_traj.traj,2)
+    az_obs = 360. .- [observ.antenna_traj.traj[i,j].alpha
+                      for i in axes(observ.antenna_traj.traj,1)]
+    pol_obs = [observ.antenna_traj.traj[i,j].beta 
+               for i in axes(observ.antenna_traj.traj,1)]
+    axs.plot(deg2rad.(az_obs), pol_obs, label="pointing $j")
+end
+axs.legend()
+axs.set_theta_zero_location("N")
+axs.set_ylim(0., 90.)
+fig.tight_layout()
 =#
 
 
 
 ### SKY COMPONENTS ###
 
-## Source
-#source flux
-flux_src = estim_casA_flux(cent_freq) # in Jy
-
-# source temperature in K #FIXME: should account for antenna position
-function T_src(t::DateTime)
-    if t <= time_on_src
-        return 0.
-    else
-        return estim_temp(flux_src, observ)
-    end
-end
-
-
-## RFI temperature
-# ground temperature in K
-T_gnd = 0 # no constant RFI
-
-# various RFI
-T_var = 0 # in K (no RFI)
-
-# total RFI temperature
-T_rfi = T_gnd + T_var
-
-
-## Atmosphere temperature
-# atmospheric temperature at zenith
-T_atm_zenith = 150 # in K
-
-# opacity of atmosphere at zenith
-tau = .05 
-
-# atmospheric temperature model
-T_atm(dec::Real) = T_atm_zenith * (1 - exp(-tau/cos(dec))) # in K
-
-
 ## Background temperature
 # CMB temperature
 T_CMB = 2.73 # in K
 
 # galaxy temperature
-T_gal(freq::Real) = 1e-1 * (freq/1.41e9)^(-2.7) # in K
+T_gal = galactic_model(cent_freq) # in K
 
 # background
-T_bkg(freq::Real) = T_CMB + T_gal(freq)
+T_bkg = T_CMB + T_gal
 
 
-## Total sky model
-function sky_mdl(dec::T,
-    caz::T,
-    time::DateTime,
-    freq::T) where {T<:Real}
-    
-    return T_src(time) + T_atm(dec) + T_rfi + T_bkg(freq)
-end
+## RFI temperature
+# ground temperature in K
+T_gnd = ground_model([0.], collect(0.:1.:180.), 250.)
+
+# various RFI
+T_var = 0. # in K (no RFI)
+
+# total RFI temperature
+T_rfi = T_gnd + T_var
+
+
+## Atmosphere temperature (and Background through it)
+# atmospheric temperature at zenith
+T_atm_zenith = 273. # in K
+
+# opacity of atmosphere at zenith
+tau = .013
+
+# atmospheric temperature model
+T_bkg_atm = atmosphere_model(T_atm_zenith, tau, T_bkg)
+
+
+## Total Fixed Background Model
+T_total_bkg = T_bkg_atm + T_rfi
 
 #=
-azimuth_grid = collect(0.:5.:360.)
-elevation_grid = collect(0.:1.:90.)
-
-fig = plt.figure(figsize=(10,10))
-ax = fig.add_subplot(1, 1, 1, polar=true)
-pc = pcolormesh(deg2rad.(azimuth_grid), 90 .- elevation_grid, sky_mdl.(deg2rad.(90 .-elevation_grid), 
-                                                                       -deg2rad.(azimuth_grid)',
-                                                                       start_obs, cent_freq), cmap="plasma")
-cbar = plt.colorbar(pc)
-cbar.set_label("Temperature [K]")
-ax.set_yticks(0:10:90, string.(Vector(90:-10:0)))
-ax.set_theta_zero_location("N")
+alpha_sky_grid = collect(0.:1.:360.)
+beta_sky_grid = T_total_bkg.beta_grid
+smap = T_total_bkg.interp_map(alpha_sky_grid, beta_sky_grid)
+az_src = 360. .- [traj_src.traj[i].alpha for i in 1:size(traj_src.traj,1)]
+pol_src = [traj_src.traj[i].beta for i in 1:size(traj_src.traj,1)]
+fig, axs = plt.subplots(subplot_kw=Dict("projection"=>"polar"))
+img = axs.pcolormesh(deg2rad.(alpha_sky_grid), beta_sky_grid, smap'; 
+                     cmap="gist_earth", shading ="nearest")
+fig.colorbar(img, label="Temperature [K]")
+axs.plot(deg2rad.(az_src), pol_src, label="source")
+for j in axes(observ.antenna_traj.traj,2)
+    az_obs = 360. .- [observ.antenna_traj.traj[i,j].alpha
+                      for i in axes(observ.antenna_traj.traj,1)]
+    pol_obs = [observ.antenna_traj.traj[i,j].beta 
+               for i in axes(observ.antenna_traj.traj,1)]
+    axs.plot(deg2rad.(az_obs), pol_obs, label="pointing $j")
+end
+axs.legend()
+axs.set_theta_zero_location("N")
 fig.tight_layout()
 =#
+
+
+## Source
+# source flux in Jy
+flux_src = estim_casA_flux.(freq_bins)
+
+# source temperature through atmosphere
+flux_atm_src = reduce(vcat, [atmos_opacity_impact(first.(flux_src), tau, t.beta)' 
+                             for t in traj_src.traj])
+F_src = PointLikeSrcFlux(TiFreqArray(flux_atm_src, traj_src.times, freq_bins), traj_src)
+
+#=
+time_bins = F_src.traj.times
+freq_bins = Array(dims(F_src.flux, :freqs))
+fig, axs = plt.subplots()
+plot_extent = [time_bins[1], time_bins[end], freq_bins[1], freq_bins[end]]
+img = axs.imshow(Array(F_src.flux), extent=plot_extent, aspect="auto", 
+                 cmap="gist_earth", interpolation="none", origin="lower")
+cbar = fig.colorbar(img)
+cbar.set_label("Flux [Jy]")
+axs.set_xlabel("Time [UTC]")
+axs.set_ylabel("Frequency [GHz]")
+fig.tight_layout()
+
+time_bins = F_src.traj.times
+freq_bins = Array(dims(F_src.flux, :freqs))
+fig, axs = plt.subplots()
+axs.plot(time_bins, Array(F_src.flux[freqs=Near(cent_freq)]), label="source at $(cent_freq/1e9) GHz")
+axs.set_xlabel("Time [UTC]")
+axs.set_ylabel("Flux [Jy]")
+axs.legend()
+fig.tight_layout()
+=#
+
+
+## Sky Model
+sky_mdl = SkyMdl(T_total_bkg, F_src)
 
 
 
 ### SATELLITES CONSTELLATION ###
 
 ## Satellite Antenna
+# size of antenna in m
+sat_ant_diameter = .8
+
+# aperture efficiency
+sat_eta_app = 1.
+
 # radiation efficiency of telescope antenna
-sat_eta_rad = .5#FIXME:check value
+sat_eta_rad = 1.
 
-#
 # maximum gain of satellite antenna
-sat_gain_max = 39.3 # in dBi#FIXME:check value in dBi
+sat_gain_max = 10^(38/10)
 
-# create ITU recommended gain profile
-# satelitte boresight half beamwidth
-half_beamwidth = 3. # in deg#FIXME:check value
+# valid frequency band
+sat_freq_band = (10e9, 14e9)
+
 # declination angles alpha
-alphas = 0.:1.:180.
+alphas = [0., 180., 359.]
+
 # azimuth angles beta
-betas = 0.:10.:350.
+betas = 0.:1.:180.
+
 # create gain dataframe
-gain_pat = antenna_mdl_ITU(sat_gain_max, half_beamwidth, alphas, betas)
+sat_gain_pat = antenna_mdl_ITU_S_1528(sat_gain_max, sat_ant_diameter,
+                                      freq_to_wave(mean(sat_freq_band)), alphas, 
+                                      betas; sat_type="LEO")
+sat_gain_pat[:,:gains] ./= maximum(sat_gain_pat[:,:gains])
+# sat_gain_pat = antenna_mdl_cst(1., alphas, betas)
+
+# satellite antenna physical temperature
+sat_T_phy = 0. # in K
 
 # create satellite antenna
-sat_ant = Antenna(gain_pat, sat_eta_rad, freq_band)
+sat_ant = Antenna(sat_ant_diameter, sat_gain_pat, sat_eta_app, sat_eta_rad, freq_band, sat_T_phy)
 
 #=
-nb_curv = 5 # number of slices to plot
-alphas, betas = get_def_angles(sat_ant) # angles where gain is defined by the file
-step_beta_ind = div(length(betas), 2*nb_curv)
-fig, axs = plt.subplots(subplot_kw=Dict("projection"=>"polar"))
-for i in 1:step_beta_ind:div(length(betas), 2)
-    alphas, gains = get_slice_gain(sat_ant, betas[i])
-    axs.plot(deg2rad.(alphas), 10 .*log10.(gains), label="β = $(betas[i])deg")
-end
-axs.legend()
+beta_grid = sat_ant.gain_pat.beta_grid
+fig, axs = plt.subplots()
+axs.plot(beta_grid, 10 .*log10.(sat_ant.gain_pat.spheremap[1,:]),
+         color="tab:blue")
 fig.tight_layout()
 =#
-
-# telescope antenna physical temperature
-sat_T_phy = 0. # in K
 
 
 ## Satellites Transmitter
@@ -249,79 +332,426 @@ sat_T_phy = 0. # in K
 sat_freq = cent_freq # in Hz
 
 # satellite transmition bandwidth
-sat_bw = 250e6 # in Hz
+sat_bw = bw # in Hz
 
-# satellite effective isotropically radiated power
-transmit_pow = -15+10*log10(300) # in dBW#FIXME:check value
-function transmit_temp(time::DateTime,
-    freq::Real)
-    
-    return power_to_temperature(10^(transmit_pow/10), 1.)#sat_bw) # in K
-end
+# number of frequency channels to devide the bandwidth
+sat_freq_chan = Int(div(sat_bw, freq_res))
 
-# create transmitter instrument
-sat_transmit = Instrument(sat_ant, sat_T_phy, sat_freq, sat_bw, transmit_temp)
+# gain of amplifier chain
+sat_gain_amps = 1.
+
+# satellite reciever temperature in K
+sat_T_rx = 0. # in K
+
+# satellite transmission model that depends on frequency
+tmt_profile = ones(sat_freq_chan)
+tmt_profile[div(sat_freq_chan, 2) .+ 
+            (-div(sat_freq_chan, 20):div(sat_freq_chan, 20))] .= 1e-8
+tmt_profile[div(sat_freq_chan, 2)] = 1.
+
+# freq response
+sat_responsetype = Lowpass(125e6-freq_res)
+designmethod = FIRWindow(hamming(sat_freq_chan+1)) # avoid 0 tap at beginning
+filter_design = digitalfilter(sat_responsetype, designmethod; fs=sat_bw)
+freq_resp = abs.(fftshift(fft(filter_design)))[1:end-1].^2
+
+# sat_responsetype2 = Lowpass((125e6-freq_res) / (sat_bw/3.1))
+# design_method2 = Butterworth(3)
+# filter_design2 = freqresp(digitalfilter(sat_responsetype2, design_method2),
+#                          range(0, sat_bw; length=sat_freq_chan+1) .*
+#                          (2π / sat_bw))
+# freq_resp = abs.(fftshift(filter_design2))[1:end-1].^2
+
+freq_resp .*= tmt_profile
+freq_resp ./= maximum(freq_resp)
+
+# create transmitter of satellite
+sat_receiver = Receiver(freq_res, sat_freq, sat_bw, sat_gain_amps, sat_T_rx, freq_resp)
+
+#=
+figure()
+plt.plot(freq_range(receiver), receiver.freq_resp, label="receiver")
+plt.plot(freq_range(sat_receiver), sat_receiver.freq_resp, label="satellite")
+plt.yscale("log")
+plt.xlabel("Frequency [Hz]")
+plt.ylabel("Frequency response")
+plt.tight_layout()
+=#
+
+# satellite effective isotropically radiated power to flux
+max_EIRP_density = 10^(-50/10)
 
 
-## Constellation of satellites
-# satellites trajectories during the observation
-# filter the satellites
-filt_name = (:sat => s -> .!contains.(s, "[DTC]"))
-filt_el = (:elevations => e -> e .> 20)
+## Satellite Instrument
+# create instrument
+sat_instrument = Instrument(sat_ant, sat_receiver)
 
+
+## List of Satellites
+# observation window
+start_sat_window, stop_sat_window = start_obs, stop_obs
+
+# fetch satellites orbit information
+name_filters = ["STARLINK"]
+avoid_names = ["[DTC]"]
+sat_info_path = "supp/traj_files/Starlink_active.csv"
+sats_catalog = fetch_satellites_info(; info_path=sat_info_path, name_filters=name_filters, 
+                                     avoid_names=avoid_names, save=false, verb=true)
+
+# compute satellites positions
+sat_time_res = Second(1)
+min_elevation_filter = 5.
+sats_pos = compute_sats_traj(sats_catalog, start_sat_window, stop_sat_window, 
+                             westford.coords, sat_time_res; save=false, 
+                             el_min=min_elevation_filter)
+
+# create list of satellites
+sats_list = form_satellites_list(sats_pos, sat_instrument, max_EIRP_density,
+                                 start_sat_window, stop_sat_window; rotate_beam=true,
+                                 time_tag=:times, sat_id_tag=:sat, 
+                                 elevation_tag=:elevations, azimuth_tag=:azimuths, 
+                                 range_tag=:ranges);
+
+
+## Constellation of Satellites
 # satellite link budget estimator
-lnk_bdgt(args...) = sat_link_budget(args...; beam_avoid = 0., turn_off = false)
+lnk_bdgt(args...; kwds...) = classic_gain_link_budget(args...;
+                                                      beam_avoid_angle=0.,
+                                                      turn_off=false, kwds...)
 
-# To get Starlink sats trajectories over Westford launch the Python script
-# 'compute_Starlink_overflights_full_traj.py'#TODO: implement in Julia
-file_traj_sats_path = "supp/traj_files/Starlink_trajectory_Westford_$(start_window)_\
-                      $(stop_window).arrow"
-starlink_constellation = Constellation(file_traj_sats_path, observ, sat_transmit,
-                                       lnk_bdgt; 
-                                       name_tag = :sat,
-                                       time_tag = :timestamp,
-                                       elevation_tag = :elevations,
-                                       azimuth_tag = :azimuths,
-                                       distance_tag = :ranges_westford,
-                                       filt_funcs = (filt_name, filt_el))
+# create constellation
+starlink_constellation = Constellation("Starlink", sats_list, lnk_bdgt)
 
 #=
 list_sats = get_sats_name(starlink_constellation)
 sel_sats = 1:length(list_sats)
-fig = plt.figure()
-ax = fig.add_subplot(1, 1, 1, polar=true)
+fig, ax = plt.subplots(subplot_kw=Dict("projection"=>"polar"))
 for s in list_sats[sel_sats]
-    sat = get_sat_traj(starlink_constellation, s)
-    ax.plot(deg2rad.(sat[:,:azimuths]), 90 .- sat[:,:elevations])
+    sat_coords = get_coords(get_sat_traj(starlink_constellation, s))
+    ax.plot(deg2rad.(360. .- sat_coords[1]), sat_coords[2])
 end
-ax.set_yticks(0:10:90, string.(Vector(90:-10:0)))
 ax.set_theta_zero_location("N")
-
-fig = plt.figure()
-ax = fig.add_subplot(1, 1, 1)
-for s in list_sats[sel_sats]
-    sat = AM.get_sat_traj(starlink_constellation, s)
-    ax.scatter(sat[:,:azimuths], sat[:,:elevations])
-end
-ax.set_xticks(0:40:360, string.(Vector(0:40:360)))
-ax.set_yticks(0:10:90, string.(Vector(0:10:90)))
-ax.set_xlabel("Azimuth [deg]")
-ax.set_ylabel("Elevation [deg]")
 =#
 
 
 
-### TEMPERATURE MODEL DURIMG OBSERVATION ###
-model_observed_temp!(observ, sky_mdl, starlink_constellation)
+### PSD MODEL DURIMG OBSERVATION ###
 
+## Compute PSD model during observation
+model_observ_psd!(observ, sky_mdl, starlink_constellation)
+
+time_bins = observ.antenna_traj.times
+freq_bins = freq_range(observ.instrument.receiver)
+plot_extent = [time_bins[1], time_bins[end], freq_bins[1], freq_bins[end]]
+i=1#for i in axes(observ.antenna_traj.traj, 2)
+    fig, axs = plt.subplots(1, 1)#, sharex=true)
+    img = axs.imshow(10. .*log10.(freq_res .* Array(observ.result[traj_idx=i,freqs=10:end-10])'), 
+                        extent=plot_extent, aspect="auto", cmap="gist_ncar", 
+                        interpolation="none", origin="lower")
+    cbar = fig.colorbar(img)
+    cbar.set_label("PSD [dBW/Hz]")
+    axs.set_ylabel("Frequency [GHz]")
+# end
+axs.set_xlabel("Time [UTC]")
+fig.tight_layout()
+
+time_bins = observ.antenna_traj.times
 fig, axs = plt.subplots()
-time_samples = get_time_stamps(observ)
-plot_result = temperature_to_power.(get_result(observ), bw)[:,1,1]
-axs.plot(time_samples, 10 .*log10.(plot_result), label="without beam avoidance")
-axs.set_xlabel("time")
-axs.set_ylabel("Power [dBW]")
-axs.grid(true)
+for i in axes(observ.antenna_traj.traj, 2)
+    axs.plot(time_bins, 10. .*log10.(observ.result[traj_idx=i,freqs=Near(10.9e9)]),
+             label="pointing $i")
+end
+axs.set_xlabel("Time [UTC]")
+axs.set_ylabel("PSD [dBW/Hz]")
 axs.legend()
 fig.tight_layout()
+
+# plot close-by satellites passes
+sats_close = RadioMdl.SatPos.sats_close_to_pointing(sats_pos, 
+                                                    observ.antenna_traj.times,
+                                                    observ.antenna_traj.traj)
+
+row_end_times = DateTime[]
+cmap = plt.get_cmap("gist_rainbow")
+for i in axes(sats_close, 1)
+    sat = sats_close[i,:sat]
+    min_pass, max_pass = sats_close[i,:t_start], sats_close[i,:t_stop]
+    row = findfirst(t -> t <= min_pass, row_end_times)
+    if row === nothing
+        push!(row_end_times, max_pass)
+        row = length(row_end_times)
+    else
+        row_end_times[row] = max_pass
+    end
+    ymin = (row - 1) * 0.02
+    ymax = ymin + 0.02
+    cur_color = cmap((i - 1) / size(sats_close, 1))
+    axs.axvspan(min_pass, max_pass, alpha=.5, ymin=ymin, ymax=ymax, color=cur_color,
+                label=sats_close[i,:sat])
+end
+
+
+## Compare with beam avoidance
+# Initialize new observation
+obs_beam_avoid = Observation(traj_obs, westford, start_obs, stop_obs)
+obs_beam_off = Observation(traj_obs, westford, start_obs, stop_obs)
+
+# define new link budget and constellation
+ang_det = 10.
+lnk_bdgt_beam_avoid(args...; 
+                    kwds...) = classic_gain_link_budget(args...; 
+                                                        beam_avoid_angle = ang_det,
+                                                        turn_off = false, kwds...)
+lnk_bdgt_beam_off(args...; 
+                  kwds...) = classic_gain_link_budget(args...; 
+                                                      beam_avoid_angle = ang_det,
+                                                      turn_off = true, kwds...)
+
+starlink_const_beam_avoid = Constellation("Starlink", sats_list, lnk_bdgt_beam_avoid)
+starlink_const_beam_off = Constellation("Starlink", sats_list, lnk_bdgt_beam_off)
+
+# Compute PSD with beam avoidance
+model_observ_psd!(obs_beam_avoid, sky_mdl, starlink_const_beam_avoid)
+model_observ_psd!(obs_beam_off, sky_mdl, starlink_const_beam_off)
+
+time_bins = observ.antenna_traj.times
+fig, axs = plt.subplots()
+fig.suptitle("Beam avoidance strategies - angle thresh = $(ang_det)°")
+for i in axes(observ.antenna_traj.traj, 2)
+    axs.plot(time_bins, 10. .*log10.(observ.result[traj_idx=i,freqs=Near(10.9e9)]),
+             label="pointing $i", linestyle="dotted", color="C$(i-1)")
+    axs.plot(time_bins, 10. .*log10.(obs_beam_avoid.result[traj_idx=i,
+                                                           freqs=Near(10.9e9)]),
+             label="pointing $i with beam avoidance", linestyle="dashed", 
+             color="C$(i-1)")
+    axs.plot(time_bins, 10. .*log10.(obs_beam_off.result[traj_idx=i,
+                                                         freqs=Near(10.9e9)]),
+             label="pointing $i with beam off", color="C$(i-1)")
+end
+axs.set_xlabel("Time [UTC]")
+axs.set_ylabel("PSD [dBW/Hz]")
+axs.legend()
+fig.tight_layout()
+
+
+## Compare without satellites
+# Initialize new observation
+observ_no_sat = deepcopy(observ)
+observ_no_sat.result .= 0.
+
+# Compute PSD without satellites
+model_observ_psd!(observ_no_sat, sky_mdl)
+
+time_bins = observ_no_sat.antenna_traj.times
+fig, axs = plt.subplots()
+for i in axes(observ_no_sat.antenna_traj.traj, 2)
+    axs.plot(time_bins, 10. .*log10.(observ_no_sat.result[traj_idx=i,
+                                                          freqs=Near(10.9e9)]),
+             label="pointing $i")
+end
+axs.set_xlabel("Time [UTC]")
+axs.set_ylabel("PSD [dBW/Hz]")
+axs.legend()
+fig.tight_layout()
+
+
+## Compare with only satellites
+# Initialize new observation
+observ_only_sat = deepcopy(observ)
+observ_only_sat.result .= 0.
+
+# Compute PSD with only satellites
+model_observ_psd!(observ_only_sat, nothing, starlink_constellation)
+
+time_bins = observ_only_sat.antenna_traj.times
+fig, axs = plt.subplots()
+for i in axes(observ_only_sat.antenna_traj.traj, 2)
+    axs.plot(time_bins, 10. .*log10.(observ_only_sat.result[traj_idx=i,
+                                                            freqs=Near(10.9e9)]),
+             label="pointing $i")
+end
+axs.set_xlabel("Time [UTC]")
+axs.set_ylabel("PSD [dBW/Hz]")
+axs.legend()
+fig.tight_layout()
+
+
+## Compare for a specific frequency and trajectory
+study_freq = 10.9e9
+study_traj = 1
+
+time_bins = observ_only_sat.antenna_traj.times
+fig, axs = plt.subplots()
+axs.plot(time_bins, 10. .*log10.(observ.result[traj_idx=study_traj,
+                                               freqs=Near(study_freq)]),
+         label="sky and sats")
+axs.plot(time_bins, 10. .*log10.(observ_no_sat.result[traj_idx=study_traj,
+                                                      freqs=Near(study_freq)]),
+         label="no sats")
+axs.plot(time_bins, 10. .*log10.(observ_only_sat.result[traj_idx=study_traj,
+                                                        freqs=Near(study_freq)]),
+         label="only sats")
+axs.set_xlabel("Time [UTC]")
+axs.set_ylabel("PSD [dBW/Hz]")
+axs.legend()
+fig.tight_layout()
+
+
+## Compare for in and out of protected band for given trajectory
+study_freq1 = 10.69e9
+study_freq2 = 10.9e9
+study_traj = 1
+
+time_bins = observ_only_sat.antenna_traj.times
+fig, axs = plt.subplots()
+axs.plot(time_bins, 10. .*log10.(observ.result[traj_idx=study_traj,
+                                               freqs=Near(study_freq2)]),
+         label="downlink band")
+axs.plot(time_bins, 10. .*log10.(observ.result[traj_idx=study_traj,
+                                               freqs=Near(study_freq1)]),
+         label="protected band")
+axs.set_xlabel("Time [UTC]")
+axs.set_ylabel("PSD [dBW/Hz]")
+axs.legend()
+fig.tight_layout()
+
+
+## Compare for different transmitters filter
+# define more simple frequency_response
+sat_responsetype2 = Lowpass((125e6-freq_res) / (sat_bw/3.1))
+design_method2 = Chebyshev2(7,55.)#Butterworth(3)
+filter_design2 = freqresp(digitalfilter(sat_responsetype2, design_method2),
+                         range(0, sat_bw; length=sat_freq_chan+1) .*
+                         (2π / sat_bw))
+freq_resp2 = abs.(fftshift(filter_design2))[1:end-1].^2
+
+freq_resp2 .*= tmt_profile
+freq_resp2 ./= maximum(freq_resp2)
+
+# create transmitter of satellite
+sat_receiver2 = Receiver(freq_res, sat_freq, sat_bw, sat_gain_amps, sat_T_rx, freq_resp2)
+
+figure()
+plt.plot(freq_range(receiver), receiver.freq_resp, label="receiver")
+plt.plot(freq_range(sat_receiver), sat_receiver.freq_resp, label="satellite FIR")
+plt.plot(freq_range(sat_receiver2), sat_receiver2.freq_resp, label="satellite butterworth")
+plt.yscale("log")
+plt.xlabel("Frequency [Hz]")
+plt.ylabel("Frequency response")
+plt.tight_layout()
+
+# create instrument
+sat_instrument2 = Instrument(sat_ant, sat_receiver2)
+
+# create list of satellites
+sats_list2 = form_satellites_list(sats_pos, sat_instrument2, max_EIRP_density,
+                                 start_sat_window, stop_sat_window; time_tag=:times,
+                                 sat_id_tag=:sat, elevation_tag=:elevations,
+                                 azimuth_tag=:azimuths, range_tag=:ranges);
+
+# create constellation
+starlink_constellation2 = Constellation("Starlink", sats_list2, lnk_bdgt)
+
+# Initialize new observation
+observ_sat2 = deepcopy(observ)
+observ_sat2.result .= 0.
+
+# Compute observation with satellite simpler frequency response
+model_observ_psd!(observ_sat2, sky_mdl, starlink_constellation2)
+
+study_freq1 = 10.69e9
+study_freq2 = 10.9e9
+study_traj = 1
+
+time_bins = observ_sat2.antenna_traj.times
+fig, axs = plt.subplots()
+axs.plot(time_bins, 10. .*log10.(observ_sat2.result[traj_idx=study_traj,
+                                               freqs=Near(study_freq2)]),
+         label="downlink band")
+axs.plot(time_bins, 10. .*log10.(observ_sat2.result[traj_idx=study_traj,
+                                                    freqs=Near(study_freq1)]),
+         label="protected band")
+axs.set_xlabel("Time [UTC]")
+axs.set_ylabel("PSD [dBW/Hz]")
+axs.legend()
+fig.tight_layout()
+
+
+## Model entire sky
+
+# sky grid
+sky_grid_cells = sky_grid(90)
+# caz_grid = collect(.5:1.:360.)
+# pol_grid = collect(.05:.1:90.)
+
+# transform in trajectory
+time_samples = observ.antenna_traj.times
+sky_grid_cells.pol = (sky_grid_cells.pol_min .+ sky_grid_cells.pol_max) ./ 2
+sky_grid_cells.caz = (sky_grid_cells.caz_min .+ sky_grid_cells.caz_max) ./ 2
+traj = [SphereCoord(r.caz, r.pol) for r in eachrow(sky_grid_cells)]
+# traj = [SphereCoord(caz, pol) for caz in caz_grid for pol in pol_grid]
+ant_map = Trajectory([traj[j] for i in 1:length(time_samples), j in eachindex(traj)], 
+                     time_samples)
+
+time_plot = DateTime("2025-02-18T15:34:58.000", dateformat)
+observ_sky = Observation(ant_map, westford, time_plot - Second(5), time_plot + Second(5))
+
+model_observ_psd!(observ_sky, nothing, starlink_constellation)
+
+psd_dB = 10 .* log10.(observ_sky.result[times=end,freqs=Near(10.9e9)])
+vmin, vmax = extrema(psd_dB)
+
+cmap = get_cmap("plasma")
+norm = plt.matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
+colors = [cmap(norm(v)) for v in psd_dB]
+
+centers = deg2rad.(360. .- sky_grid_cells[:,:caz])
+widths  = deg2rad.(sky_grid_cells[:,:caz_max] .- sky_grid_cells[:,:caz_min])
+heights = sky_grid_cells[:,:pol_max] .- sky_grid_cells[:,:pol_min]
+bottoms = sky_grid_cells[:,:pol_min]
+
+fig = figure(figsize=(16,16))
+ax = fig.add_subplot(111, polar=true)
+ax.bar(centers, heights; width=widths, bottom=bottoms, color=colors,
+       edgecolor=colors, linewidth=0.3, align="center");
+ax.set_theta_zero_location("N")
+ax.set_theta_direction(1)
+ax.set_rlabel_position(135)
+ax.set_ylim(0., 90.)
+ax.set_yticks(0:10:90, string.(Vector(90:-10:0)))
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm.set_array([])
+fig.colorbar(sm, ax=ax, label="EPFD (dBW)", shrink=0.7, pad=0.1)
+tight_layout()
+
+
+# psd_dB = zeros(length(pol_grid), length(caz_grid))
+# for i in dims(observ_sky.result, :traj_idx)
+#     coord = observ_sky.antenna_traj.traj[1,i]
+#     pol_idx = findmax(pol_grid .== coord.beta)[2]
+#     caz_idx = findmax(caz_grid .== coord.alpha)[2]
+#     psd_dB[pol_idx,caz_idx] = 10 .* log10.(observ_sky.result[times=At(time_plot),
+#                                                              freqs=Near(10.9e9), 
+#                                                              traj_idx=i])
+# end
+
+# caz_plot_grid = [caz_grid[1] - (caz_grid[2] - caz_grid[1]) / 2.
+#                  (caz_grid[1:end-1] .+ caz_grid[2:end]) ./ 2.
+#                  caz_grid[end] + (caz_grid[end] - caz_grid[end-1]) / 2.]
+# pol_plot_grid = [pol_grid[1] - (pol_grid[2] - pol_grid[1]) / 2.
+#                  (pol_grid[1:end-1] .+ pol_grid[2:end]) ./ 2.
+#                  pol_grid[end] + (pol_grid[end] - pol_grid[end-1]) / 2.]
+                 
+# fig = plt.figure(figsize=(16, 16))
+# ax = fig.add_subplot(1, 1, 1, polar=true)
+
+# pc = pcolormesh(deg2rad.(mod.(360. .- caz_plot_grid, 360.1)), 90 .- pol_plot_grid, psd_dB,
+#                 cmap="plasma", shading="auto")
+# cbar = plt.colorbar(pc)
+# cbar.set_label("Power [dBW]")
+# ax.set_yticks(0:10:90, string.(Vector(90:-10:0)))
+# ax.set_theta_zero_location("N")
+# tight_layout()
+
 
 

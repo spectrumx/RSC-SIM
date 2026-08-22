@@ -3,80 +3,108 @@
     power_pattern_from_cut_file(file_path::String;
                                 free_sp_imp::Real = 377,
                                 verb::Bool = false)
+                                
+Yields the radiated power pattern, in W, of an antenna, times the radiation
+efficiency already included in the `.cut` file containing co- and
+cross-polarization E-field. 
 
-yields the radiated power pattern, in dBW, of an antenna, times the radiation
-efficiency from the `.cut` file containing co- and cross-polarization E-field.
 Headers in the file are below a line starting with `Field`. It is composed of
-the starting value of the declination angle α, the step and number of samples of
-α and the value of the azimuthal angle β.
+the starting value of the declination angle, the step and number of samples of
+the declination angle and the value of the azimuthal angle.
 
 """
 function power_pattern_from_cut_file(file_path::String;
     free_sp_imp::Real = 377,
     verb::Bool = false)
+    
+    @assert occursin(".cut", file_path) "the power pattern file must be a .cut file"
 
     # parse file
     Es = readdlm(file_path)
-    pattern = DataFrame(alpha=Float64[], beta=Float64[], power=Float64[])
+    pattern = DataFrame(polar=Float64[], caz=Float64[], power=Float64[])
     k = 1
-    α_step = 0.0
+    dec_step = 0.
     while k <= size(Es,1)
         header_line = k + findfirst(x -> x == "Field", Es[k:end,:])[1]
         header = Es[header_line,:]
         verb && println(header)
-        α_start = header[1]
-        α_step = header[2]
-        nb_α = header[3]
-        for t in 1:nb_α
-            α = α_start + (t-1)*α_step
+        dec_start = header[1]
+        dec_step = header[2]
+        nb_dec = header[3]
+        for t in 1:nb_dec
+            polar = dec_start + (t-1)*dec_step
             θ = header[4]
             # power pattern, given in dBW, is the sum of the magnitude (squared
             # modulus) of the co- and cross-polarization complex electric field,
             # devided by twice the free-space impedance
             @inbounds u = sum(Es[header_line+t,1:4].^2)/(2*free_sp_imp)
-            push!(pattern, [α, θ, u])
+            push!(pattern, [polar, θ, u])
         end
-        k = header_line+nb_α+1
+        k = header_line+nb_dec+1
     end
-    decimal_places = max(0, -floor(Int, log10(abs(α_step - round(α_step)))))
-    pattern[!,:alpha] .= round.(pattern[!,:alpha]; digits=decimal_places)
-
+    res_dec = dec_step - round(dec_step)
+    if res_dec == 0.
+        decimal_places = 0
+    else
+        decimal_places = max(0, -floor(Int, log10(abs(res_dec))))
+    end
+    pattern[!,:polar] .= round.(pattern[!,:polar]; digits=decimal_places)
+    
     # !!!!!!!!!!!!!!! THIS IS ONLY THE CASE WITH DANIEL'S FORMAT !!!!!!!!!!!!!!!
+    
+    @warn "This function assumes TICRA generated files"
 
-    @warn "This function assumes Daniel Sheen generated files"
+    # check that polar ∈ [-180,180] and caz ∈ [0, 180[
+    subset!(pattern, :polar => p -> -180. .<= p .<= 180., 
+            :caz => a -> 0. .<= a .< 180.)
 
-    # check that α ∈ [-180,180[ and β ∈ [0, 180[
-    subset!(pattern, :alpha => a -> -180.0 .<= a .< 180.0,
-    :beta => b -> 0.0 .<= b .< 180.0)
-    # pattern[1,:alpha] == -180.0 ? nothing : replace!(pattern, :alpha => a -> -a)
+    # at this point, when the telescope is pointed at the horizon, caz = 0 gives
+    # an horizontal slice, with polar > 0 oriented towards co-azimuth angles..
 
-    # at this point, when the telescope is pointed at the horizon, β = 0 gives
-    # an horizontal slice, with α > 0 oriented towards counter-clockwise azimuth
-    # angles..
-
-    # move the origin of β so that, when telescope points at the horizon, the
-    # first slice (for the new β = 0) is vertical with α > 0 oriented towards
+    # change interval so that caz ∈ [0,360[ and polar ∈ [0,180]
+    pattern[pattern.polar .<= 0.,:caz] .+= 180.
+    pattern[pattern.polar .< 0.,:polar] .*= -1.
+    append!(pattern, [(;polar = zero(eltype(pattern.polar)), caz = i, 
+                       power = pattern[pattern.polar .== 0.,:power][1])
+                      for i in pattern[pattern.polar .== maximum(pattern.polar) .&& 
+                                       pattern.caz .< 180.,:caz]])
+    
+    # move the origin of caz so that, when telescope points at the horizon, the
+    # first slice (for the new caz = 0) is vertical with polar > 0 oriented towards
     # the ground.
-    pattern[:,:beta] = mod.(pattern[!,:beta] .+ 90.0, 180.0)
-    pattern[pattern.beta .>= 90.0,:alpha] .*= -1.0
-    pattern[pattern.alpha .== 180.0,:alpha] .*= -1.0
-
-    # change evolution domains so that α ∈ [0,180] and β ∈ [0, 360]
-    pattern[pattern.alpha .<= 0,:beta] .+= 180
-    rng_beta = pattern[pattern.alpha .== maximum(pattern.alpha),:beta]
-    pattern[pattern.alpha .< 0,:alpha] .*= -1
-    pattern[:,:alpha] = abs.(pattern[:,:alpha])
-    append!(pattern, [(alpha = zero(eltype(pattern.alpha)), beta = i,
-    power = pattern[pattern.alpha .== 0.0,:power][1])
-    for i in rng_beta])
-    append!(pattern, [(alpha = eltype(pattern.alpha)(180), beta = i,
-    power = pattern[pattern.alpha .== 180.0,:power][1])
-    for i in rng_beta])
-
+    pattern[:,:caz] = mod.(pattern[!,:caz] .- 90., 360.)
+    
     # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-    sort!(pattern, [:beta, :alpha])
-
+    
+    sort!(pattern, [:caz, :polar])
+    
     return pattern
+end
+
+
+
+"""
+    read_VGOS_antenna_traj(file_path::String;
+                           nb_targets_read::UnitRange{Int} = 1:Inf)
+
+Yields the trajectory of a VGOS antenna.
+
+"""
+function read_VGOS_antenna_traj(file_path::String;
+    kwds...)
+    
+    @assert occursin(".dat", file_path) "the trajectory file must be a .dat file"
+
+    antenna_pos = CSV.read(file_path, DataFrame; delim=" ", ignorerepeated=true, 
+                           header=false, kwds...)
+    rename!(antenna_pos, names(antenna_pos)[end-1:end] .=> ["azimuths", "elevations"])
+    antenna_pos[:,:times] .= DateTime.(antenna_pos.Column1) .+ 
+                            Day.(antenna_pos.Column2 .- 1) .+ 
+                            Hour.(antenna_pos.Column3) .+ Minute.(antenna_pos.Column4) .+
+                            Second.(antenna_pos.Column5)
+    select!(antenna_pos, [:times, :azimuths, :elevations])
+    sort!(antenna_pos, :times)
+    
+    return antenna_pos
 end
 
