@@ -95,7 +95,7 @@ degrees) and `alpha_window` (in degrees), weighted by sin(β). If `normalize`,
 divides by 4π so the result is a sphere fraction; otherwise returns the raw
 solid-angle-weighted integral. 
 
-"""#TODO: update to handle non-uniform grids and put in `coord_frames.jl`
+"""#TODO: update to handle non-uniform grids
 function integrate_spheremap(S::SphereMap{T};
     beta_window::Tuple{<:Real,<:Real}  = (0, 180),
     alpha_window::Tuple{<:Real,<:Real} = (0, 360),

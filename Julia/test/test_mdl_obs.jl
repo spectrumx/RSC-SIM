@@ -724,34 +724,3 @@ sm.set_array([])
 fig.colorbar(sm, ax=ax, label="EPFD (dBW)", shrink=0.7, pad=0.1)
 tight_layout()
 
-
-# psd_dB = zeros(length(pol_grid), length(caz_grid))
-# for i in dims(observ_sky.result, :traj_idx)
-#     coord = observ_sky.antenna_traj.traj[1,i]
-#     pol_idx = findmax(pol_grid .== coord.beta)[2]
-#     caz_idx = findmax(caz_grid .== coord.alpha)[2]
-#     psd_dB[pol_idx,caz_idx] = 10 .* log10.(observ_sky.result[times=At(time_plot),
-#                                                              freqs=Near(10.9e9), 
-#                                                              traj_idx=i])
-# end
-
-# caz_plot_grid = [caz_grid[1] - (caz_grid[2] - caz_grid[1]) / 2.
-#                  (caz_grid[1:end-1] .+ caz_grid[2:end]) ./ 2.
-#                  caz_grid[end] + (caz_grid[end] - caz_grid[end-1]) / 2.]
-# pol_plot_grid = [pol_grid[1] - (pol_grid[2] - pol_grid[1]) / 2.
-#                  (pol_grid[1:end-1] .+ pol_grid[2:end]) ./ 2.
-#                  pol_grid[end] + (pol_grid[end] - pol_grid[end-1]) / 2.]
-                 
-# fig = plt.figure(figsize=(16, 16))
-# ax = fig.add_subplot(1, 1, 1, polar=true)
-
-# pc = pcolormesh(deg2rad.(mod.(360. .- caz_plot_grid, 360.1)), 90 .- pol_plot_grid, psd_dB,
-#                 cmap="plasma", shading="auto")
-# cbar = plt.colorbar(pc)
-# cbar.set_label("Power [dBW]")
-# ax.set_yticks(0:10:90, string.(Vector(90:-10:0)))
-# ax.set_theta_zero_location("N")
-# tight_layout()
-
-
-

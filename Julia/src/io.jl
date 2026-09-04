@@ -52,7 +52,7 @@ function power_pattern_from_cut_file(file_path::String;
     
     # !!!!!!!!!!!!!!! THIS IS ONLY THE CASE WITH DANIEL'S FORMAT !!!!!!!!!!!!!!!
     
-    @warn "This function assumes TICRA generated files"
+    @info "This function assumes TICRA generated files"
 
     # check that polar ∈ [-180,180] and caz ∈ [0, 180[
     subset!(pattern, :polar => p -> -180. .<= p .<= 180., 

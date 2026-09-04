@@ -290,13 +290,15 @@ end
 Defines a sky grid as detailed in ITU-R S.1586.
 
 """
-function sky_grid(nb_elevation_rings::Int = 30)
+function sky_grid(nb_elevation_rings::Int = 30;
+    min_elevation_filter::Real = 5.)
     
     # grid polar resolution in degrees
     pol_res = Float64(div(90, nb_elevation_rings))
     
     # pol-caz cells boundaries
     pol_rings = [(pol_res * (p - 1), pol_res * p) for p in 1:nb_elevation_rings]
+    pol_rings = pol_rings[last.(pol_rings) .<= (90. - min_elevation_filter)]
     sky_cells = DataFrame(pol_min=Float64[], pol_max=Float64[], caz_min=Float64[],
                           caz_max=Float64[])
     for i in eachindex(pol_rings)

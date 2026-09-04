@@ -20,11 +20,12 @@ with 'p' the point of spherical coordinates (α,β) in degrees, or alternatively
 of cartesian coordinates (x,y,z).
 
 """
-module CoordFrames#FIXME: rename file to same name as module
+module CoordFrames
 
 using DataFrames
 using Interpolations
 using LoopVectorization
+using StaticArrays
 
 export add_coords,
        cart_to_sphe_coord,
@@ -230,13 +231,13 @@ struct SphereMap{T,V<:AbstractVector{T},M<:AbstractMatrix{T},
         if length(alpha_grid) == 1 && alpha_grid[1] == 0
             # @warn "alpha_grid contains only origin, expand to two values assuming \
             #        uniform map"        
-            alpha_grid = [alpha_grid[1], mod(alpha_grid[1]+180., 360.)]
+            alpha_grid = [alpha_grid[1], mod(alpha_grid[1] + T(180), T(360))]
             spheremap = repeat(reshape(spheremap, 1, :), length(alpha_grid), 1)
             interp_map = interpolate_sphere_map(spheremap, alpha_grid, beta_grid)
         end
         @assert length(alpha_grid) > 1
-        @assert all(0 .<= alpha_grid .<= 360.)
-        @assert all(0 .<= beta_grid .<= 180.)
+        @assert all(0 .<= alpha_grid .<= T(360))
+        @assert all(0 .<= beta_grid .<= T(180))
         @assert length(beta_grid) > 1
         @assert length(alpha_grid) == size(spheremap, 1) == size(interp_map, 1) - 1
         @assert length(beta_grid) == size(spheremap, 2) == size(interp_map, 2)
@@ -410,8 +411,8 @@ function resample_rotated(SM::SphereMap{T},
             yr = Rp[2,1]*x + Rp[2,2]*y + Rp[2,3]*z
             zr = Rp[3,1]*x + Rp[3,2]*y + Rp[3,3]*z
             
-            α_orig[i,j] = mod(atan(yr, xr)*(180/π), T(360))
-            β_orig[i,j] = acos(clamp(zr, -one(T), one(T))) * (180/π)
+            α_orig[i,j] = mod(atan(yr, xr) * T(180/π), T(360))
+            β_orig[i,j] = acos(clamp(zr, -one(T), one(T))) * T(180/π)
         end
     end
 
@@ -457,9 +458,9 @@ function pass_frame_to_frame(SM::SphereMap{T},
     Psi::Real,
     new_alpha_grid::AbstractVector{T} = SM.alpha_grid,
     new_beta_grid::AbstractVector{T} = SM.beta_grid;
-    pre_load_rot_mat::Union{Nothing, Matrix{T}} = nothing) where T
+    pre_load_rot_mat::Union{Nothing, AbstractMatrix} = nothing) where T
 
-    R = isnothing(pre_load_rot_mat) ? rot_mat(Gamma, Psi) : pre_load_rot_mat
+    R = as_rot_mat(pre_load_rot_mat, Gamma, Psi)
 
     return resample_rotated(SM, R, new_alpha_grid, new_beta_grid)
 end
@@ -517,7 +518,7 @@ function rotate_to(SM::SphereMap,
     new_beta_grid::AbstractVector = SM.beta_grid;
     pre_load_rot_mat::Union{Nothing, Matrix} = nothing)
 
-    R = isnothing(pre_load_rot_mat) ? rot_mat(Gamma, Psi) : pre_load_rot_mat
+    R = as_rot_mat(pre_load_rot_mat, Gamma, Psi)
 
     return resample_rotated(SM, transpose(R), new_alpha_grid, new_beta_grid)
 end
@@ -623,9 +624,9 @@ end
 
 
 """
-    spher_to_cart_coord(alpha::Real,
-                        beta::Real, 
-                        r::Real = 1.0)
+    spher_to_cart_coord(alpha::T,
+                        beta::T, 
+                        r::T = one(T)) where T<:AbstractFloat
 
 Converts spherical coordinates (in degrees) into cartesian coordinates.
 
@@ -635,11 +636,21 @@ Converts spherical coordinates (in degrees) into cartesian coordinates.
 Uses 'spher_to_cart_coord' on a 'SphereCoord'.
 
 """
-function spher_to_cart_coord(alpha::Real, 
-    beta::Real, 
-    r::Real = 1.0)
+@inline function spher_to_cart_coord(alpha::T, 
+    beta::T, 
+    r::T = one(T)) where T<:AbstractFloat
+    
+    sa, ca = sincosd(alpha)
+    sb, cb = sincosd(beta)
 
-    return [r*sind(beta)*cosd(alpha), r*sind(beta)*sind(alpha), r*cosd(beta)]
+    return SVector{3,T}(r*sb*ca, r*sb*sa, r*cb)
+end
+
+@inline function spher_to_cart_coord(alpha::Real, 
+    beta::Real, 
+    r::Real = 1.) 
+    
+    return spher_to_cart_coord(float(alpha), float(beta), float(r))
 end
 
 spher_to_cart_coord(spherecoord::SphereCoord) = spher_to_cart_coord(spherecoord.alpha, 
@@ -649,20 +660,20 @@ spher_to_cart_coord(spherecoord::SphereCoord) = spher_to_cart_coord(spherecoord.
 
 
 """
-    cart_to_sphe_coord(x::Real, 
-                       y::Real,
-                       z::Real)
+    cart_to_sphe_coord(x::T, 
+                       y::T,
+                       z::T) where T<:AbstractFloat
 
 Converts cartesian coordinates into spherical coordinates (in degrees).
 
 """
-function cart_to_sphe_coord(x::Real, 
-    y::Real,
-    z::Real)
+function cart_to_sphe_coord(x::T, 
+    y::T,
+    z::T) where T<:AbstractFloat
 
-    r = hypot(x, y, z)
-    alpha = mod(atand(y, x), 360.)
-    beta  = acosd(z / r)
+    r = sqrt(x*x + y*y + z*z)
+    alpha = mod(atand(y, x), T(360))
+    beta  = acosd(clamp(z / r, -one(T), one(T)))
 
     return (alpha, beta, r)
 end
@@ -670,8 +681,8 @@ end
 
 
 """
-    rot_mat(alpha::Real,
-            beta::Real)
+    rot_mat(alpha::T,
+            beta::T) where T<:AbstractFloat
 
 yields the 3D rotation matrix given two spherical coordinates in degrees.
 
@@ -681,22 +692,63 @@ yields the 3D rotation matrix given two spherical coordinates in degrees.
 Uses 'rot_mat' on a 'SphereCoord'.
 
 """
-function rot_mat(alpha::Real,
-    beta::Real)
+@inline function rot_mat(alpha::T,
+    beta::T) where T<:AbstractFloat
 
-    # rotation of alpha around Z
-    R_z_alpha = [ cosd(alpha) -sind(alpha) 0
-                  sind(alpha) cosd(alpha)  0
-                        0          0     1 ]
-    # rotation of beta around Y
-    R_y_beta = [ cosd(beta)  0  sind(beta)
-                      0     1       0      
-                -sind(beta)  0  cosd(beta) ]
-                      
-    return R_z_alpha * R_y_beta
+    sa, ca = sincosd(alpha)
+    sb, cb = sincosd(beta)
+
+    # rotation of alpha around Z * rotation of beta around Y
+    return @SMatrix [ ca*cb    -sa      ca*sb 
+                      sa*cb     ca      sa*sb 
+                       -sb     zero(T)    cb  ]
 end
 
+@inline rot_mat(alpha::Real, beta::Real) = rot_mat(float(alpha), float(beta))
+
 rot_mat(spherecoord::SphereCoord) = rot_mat(spherecoord.alpha, spherecoord.beta)
+
+
+
+"""
+    as_rot_mat(::Nothing,
+               alpha::T,
+               beta::T) where T<:AbstractFloat
+
+---
+
+    as_rot_mat(M::Smatrix{3,3,T},
+               alpha::T,
+               beta::T) where T<:AbstractFloat
+
+---
+    as_rot_mat(M::AbstractMatrix,
+               alpha::T,
+               beta::T) where T<:AbstractFloat
+
+Create a static rotation matrix from the given angles (α,β) in degrees if a
+`nothing` is passed or returns the given static matrix `M` unchanged if it is
+passed as first argument. If an abstractMatrix is passed, it will be converted
+to a static matrix.
+
+Used to set type of potentially pre-loaded rotation matrices types at compilation time.
+
+"""
+@inline function as_rot_mat(::Nothing, 
+    alpha::T, 
+    beta::T) where T<:AbstractFloat 
+    
+    return rot_mat(alpha, beta)
+end
+
+@inline as_rot_mat(M::SMatrix{3,3,T}, alpha::T, beta::T) where T<:AbstractFloat = M
+
+@inline function as_rot_mat(M::AbstractMatrix, 
+    alpha::T, 
+    beta::T) where T<:AbstractFloat
+    
+    return SMatrix{3,3}(M)
+end
 
 
 
@@ -705,7 +757,7 @@ rot_mat(spherecoord::SphereCoord) = rot_mat(spherecoord.alpha, spherecoord.beta)
                         beta::Real,
                         Gamma::Real,
                         Psi::Real;
-                        pre_load_rot_mat::Union{Matrix,Nothing} = nothing,
+                        pre_load_rot_mat::Union{AbstractMatrix,Nothing} = nothing,
                         inverse::Bool = false)
 
 Given the spherical coordinates (α,β) in degrees of a point in the ('X','Y','Z')
@@ -740,10 +792,10 @@ function pass_frame_to_frame(alpha::Real,
     beta::Real,
     Gamma::Real,
     Psi::Real;
-    pre_load_rot_mat::Union{Matrix,Nothing} = nothing)
+    pre_load_rot_mat::Union{AbstractMatrix,Nothing} = nothing)
 
     # rotation matrix for new frame
-    R = isnothing(pre_load_rot_mat) ? rot_mat(Gamma, Psi) : pre_load_rot_mat
+    R = as_rot_mat(pre_load_rot_mat, Gamma, Psi)
     
     # cartesian coord of point in (X,Y,Z)
     p_XYZ = spher_to_cart_coord(alpha, beta)

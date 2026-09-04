@@ -1,6 +1,7 @@
 
 #TODO: see Chapt 9 S.Paine AM package for some refraction accounting
 
+
 """
     free_space_loss(rng::T,
                     freq::T) where T
@@ -45,7 +46,7 @@ end
                              sat_instru::Instrument{T},
                              tel_pointing_coord::SphereCoord{T},
                              tel_instru::Instrument{T};
-                             pre_load_rot_mat::Union{Matrix,Nothing} = nothing,
+                             pre_load_rot_mat::Union{AbstractMatrix,Nothing} = nothing,
                              beam_avoid_angle::T = 0.0,
                              turn_off::Bool = false) where T
 
@@ -70,12 +71,14 @@ is reduced by "steering" away the satellite boresight of 45 degrees.
 
 """
 function classic_gain_link_budget(sat_coord::SphereCoord{T},
-    sat_instru::Instrument{T},
+    sat_instru::Instrument{T,Us,As},
     tel_pointing_coord::SphereCoord{T},
-    tel_instru::Instrument{T};
-    pre_load_rot_mat::Union{Matrix,Nothing} = nothing,
+    tel_instru::Instrument{T,U,A};
+    pre_load_rot_mat::Union{AbstractMatrix,Nothing} = nothing,
     beam_avoid_angle::T = 0.0,
-    turn_off::Bool = false) where T
+    turn_off::Bool = false) where {T<:AbstractFloat,Us<:Union{T,AbstractVector{T}}, 
+                                   As<:Antenna{T},U<:Union{T,AbstractVector{T}},
+                                   A<:Antenna{T}}
 
     # frequency bins of receiver
     freq_bins = freq_range(sat_instru.receiver)
@@ -107,10 +110,11 @@ function classic_gain_link_budget(sat_coord::SphereCoord{T},
             end
         else
             # get boresight pointing of satellite antenna
-            sat_beam_alpha, sat_beam_beta = get_boresight_gain(sat_instru.antenna)[2:3]
+            sat_beam_coord = get_boresight_gain_coord(sat_instru.antenna)
             
             # boresight (antenna frame, X=North,Y=East,Z=Nadir) → ECEF → topo
-            v_ned  = spher_to_cart_coord(sat_beam_alpha, sat_beam_beta, one(T))
+            v_ned  = spher_to_cart_coord(sat_beam_coord.alpha, sat_beam_coord.beta, 
+                                         one(T))
             v_ecef = R_ned_s * v_ned
             v_t  = -R_nwz_t' * v_ecef
             alpha_b, beta_b = cart_to_sphe_coord(v_t[1], v_t[2], v_t[3])[1:2]
@@ -120,8 +124,8 @@ function classic_gain_link_budget(sat_coord::SphereCoord{T},
             # closer than beam_avoid_angle
             ang_sep = angular_separation(sat_beam_coord_topo, tel_pointing_coord)
             if ang_sep < beam_avoid_angle
-                tel_coord_in_sat = SphereCoord(sat_beam_alpha,
-                                               mod(sat_beam_beta + T(45), T(180)),
+                tel_coord_in_sat = SphereCoord(sat_beam_coord.alpha,
+                                               mod(sat_beam_coord.beta + T(45), T(180)),
                                                sat_coord.r)
             end
         end
@@ -131,7 +135,9 @@ function classic_gain_link_budget(sat_coord::SphereCoord{T},
     gain_sat = get_gain_value(sat_instru.antenna, tel_coord_in_sat)
 
     #link budget
-    return [simple_link_budget(gain_tel, gain_sat, sat_coord.r, f) for f in freq_bins]
+    # return [simple_link_budget(gain_tel, gain_sat, sat_coord.r, f) for f in
+    # freq_bins]
+    return (gain_tel * gain_sat / (4π * sat_coord.r)^2) .* freq_to_wave.(freq_bins).^2
 end
 
 
@@ -141,7 +147,7 @@ end
                      sat_instru::Instrument{T},
                      tel_pointing_coord::SphereCoord{T},
                      tel_instru::Instrument{T};
-                     pre_load_rot_mat::Union{Matrix,Nothing} = nothing) where T
+                     pre_load_rot_mat::Union{AbstractMatrix,Nothing} = nothing) where T
 
 Compute the EIRP link budget for a satellite and a telescope, that is:
 
@@ -149,11 +155,15 @@ Compute the EIRP link budget for a satellite and a telescope, that is:
 
 """
 function epfd_link_budget(sat_coord::SphereCoord{T},
-    sat_instru::Instrument{T},
+    sat_instru::Instrument{T,Us,As},
     tel_pointing_coord::SphereCoord{T},
-    tel_instru::Instrument{T};
-    pre_load_rot_mat::Union{Matrix,Nothing} = nothing) where T
-    
+    tel_instru::Instrument{T,U,A};
+    pre_load_rot_mat::Union{AbstractMatrix,Nothing} = nothing) where {T<:AbstractFloat,
+                                                        Us<:Union{T,AbstractVector{T}},
+                                                                      As<:Antenna{T},
+                                                        U<:Union{T,AbstractVector{T}},
+                                                        A<:Antenna{T}}
+
     # coordinate of sat in telescope frame
     sat_coord_in_tel = pass_frame_to_frame(sat_coord, tel_pointing_coord;
                                            pre_load_rot_mat=pre_load_rot_mat)
@@ -162,7 +172,8 @@ function epfd_link_budget(sat_coord::SphereCoord{T},
     tel_antenna = tel_instru.antenna
 
     # telescope gain
-    gain_tel = get_gain_value(tel_antenna, sat_coord_in_tel) / get_boresight_gain(tel_antenna)[1]
+    gain_tel = get_gain_value(tel_antenna, sat_coord_in_tel) / 
+               get_boresight_gain(tel_instru.antenna)
     
     return gain_tel / (4π * sat_coord.r^2)
 end
